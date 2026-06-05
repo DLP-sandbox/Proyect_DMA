@@ -75,12 +75,15 @@ def build_price_chart(df_daily: pd.DataFrame, indicators: dict, ticker: str) -> 
         macd_line = macd_signal = macd_hist = None
 
     # 4 subplots: Precio | Volumen | RSI | MACD
+    # NOTA: el título del subplot 1 ("NVDA — Precio") va vacío para evitar
+    # que se solape con la leyenda horizontal (que también va arriba del
+    # subplot 1). El título se agrega abajo como annotation custom.
     fig = make_subplots(
         rows=4, cols=1,
         shared_xaxes=True,
         vertical_spacing=0.02,
         row_heights=[0.55, 0.15, 0.15, 0.15],
-        subplot_titles=[f"{ticker} — Precio", "Volumen", "RSI 14", "MACD"],
+        subplot_titles=["", "Volumen", "RSI 14", "MACD"],
     )
 
     # ── Candlesticks ──────────────────────────────────────────────────────
@@ -174,6 +177,23 @@ def build_price_chart(df_daily: pd.DataFrame, indicators: dict, ticker: str) -> 
         ), row=4, col=1)
         fig.add_hline(y=0, line_color=MUTED, line_width=1, opacity=0.5, row=4, col=1)
 
+    # Título "TICKER — Precio" como annotation DEBAJO de la leyenda,
+    # alineado a la izquierda del subplot 1 para que NUNCA se solape con
+    # la leyenda horizontal que vive arriba del subplot.
+    fig.add_annotation(
+        text=f"<b>{ticker} — Precio</b>",
+        xref="x domain", yref="y domain",
+        x=0.01, y=0.97,
+        xanchor="left", yanchor="top",
+        showarrow=False,
+        font=dict(size=12, color=TEXT, family="JetBrains Mono, monospace"),
+        bgcolor="rgba(11,14,17,0.7)",
+        bordercolor="rgba(255,184,77,0.20)",
+        borderwidth=1,
+        borderpad=4,
+        row=1, col=1,
+    )
+
     # ── Layout ────────────────────────────────────────────────────────────
     fig.update_layout(
         paper_bgcolor=BG_MAIN,
@@ -184,14 +204,14 @@ def build_price_chart(df_daily: pd.DataFrame, indicators: dict, ticker: str) -> 
         xaxis_rangeslider_visible=False,
         legend=dict(
             orientation="h",
-            yanchor="bottom", y=1.01,
+            yanchor="bottom", y=1.02,
             xanchor="center", x=0.5,
             font=dict(size=10, color=TEXT),
             bgcolor="rgba(11,14,17,0.6)",
             bordercolor="rgba(255,184,77,0.15)",
             borderwidth=1,
         ),
-        margin=dict(l=10, r=10, t=50, b=10),
+        margin=dict(l=10, r=10, t=55, b=10),
     )
 
     # Colores de ejes
