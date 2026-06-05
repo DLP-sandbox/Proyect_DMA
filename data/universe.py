@@ -42,11 +42,19 @@ def get_nasdaq100_tickers() -> list[str]:
 
 
 def get_full_universe() -> list[str]:
-    """Universo combinado S&P500 + NASDAQ-100, sin duplicados."""
-    sp500 = get_sp500_tickers()
+    """Universo del scan = NASDAQ-100 (las acciones más relevantes para retail).
+
+    Decisión: reducimos de ~600 (S&P500 + NASDAQ-100) a ~100 porque Yahoo
+    Finance rate-limita agresivamente las IPs de cloud providers (AWS, donde
+    corre Streamlit Cloud). Con ~100 tickers el scan es confiable y rápido,
+    sin perder cobertura de las acciones que la gente realmente sigue.
+    Si en el futuro quieres scanear el universo completo, fallback a
+    `_fallback_tickers()` o cambia esta función para concatenar S&P500."""
     ndx = get_nasdaq100_tickers()
-    combined = list(dict.fromkeys(sp500 + ndx))  # preserva orden, elimina dups
-    return combined
+    if ndx and len(ndx) >= 50:
+        return ndx
+    # Fallback estático si Wikipedia falla
+    return _fallback_tickers()
 
 
 def _fallback_tickers() -> list[str]:

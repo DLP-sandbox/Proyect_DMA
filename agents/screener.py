@@ -95,10 +95,11 @@ class ScreenerAgent:
             pct_from_52w_high=0, screener_score=50, pass_filters=True,
         )
 
-    def _batch_screen(self, tickers: list[str], batch_size: int = 20, callback=None, filters: Optional[dict] = None) -> list[ScreenerResult]:
-        """Descarga datos en batches. Batches pequeños (20) para no disparar
-        rate-limit de Yahoo Finance cuando corremos en Streamlit Cloud (IP
-        compartida con muchos otros usuarios de AWS)."""
+    def _batch_screen(self, tickers: list[str], batch_size: int = 10, callback=None, filters: Optional[dict] = None) -> list[ScreenerResult]:
+        """Descarga datos en batches MUY chicos (10) con pausas amplias.
+        Esto evita el rate-limit que Yahoo Finance aplica a IPs de cloud
+        providers (AWS, donde corre Streamlit Cloud). Con NASDAQ-100 son
+        ~10 batches, total ~60-90s."""
         import time
         all_results = []
         total = len(tickers)
@@ -109,21 +110,21 @@ class ScreenerAgent:
             if callback:
                 callback(batch[0], i, total)
 
-            # Reintentar hasta 2 veces si el batch viene vacío (rate-limit transitorio)
+            # Reintentar hasta 3 veces si el batch viene vacío (rate-limit)
             batch_results = []
-            for attempt in range(2):
+            for attempt in range(3):
                 try:
                     batch_results = self._screen_tickers(batch, filters=f)
                     if batch_results:
                         break
-                    time.sleep(0.8)  # respiro antes del retry
+                    time.sleep(1.0 + attempt * 0.5)  # backoff progresivo
                 except Exception:
-                    time.sleep(0.8)
+                    time.sleep(1.0 + attempt * 0.5)
                     continue
             all_results.extend(batch_results)
 
-            # Micro-pausa entre batches para ser amables con Yahoo
-            time.sleep(0.15)
+            # Pausa entre batches — Yahoo es más tolerante con tráfico espaciado
+            time.sleep(0.4)
 
         return all_results
 
