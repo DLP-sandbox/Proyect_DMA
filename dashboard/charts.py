@@ -213,7 +213,9 @@ def build_price_chart(df_daily: pd.DataFrame, indicators: dict, ticker: str) -> 
 # ── Tachómetro / Gauge ────────────────────────────────────────────────────
 
 def build_gauge(score: float, recommendation: str) -> go.Figure:
-    """Tachómetro grande con el DLP Score."""
+    """Tachómetro DLP Score con el número GRANDE separado del arco para
+    garantizar que NUNCA se solape (issue conocido de Plotly gauge+number
+    en figuras pequeñas)."""
 
     rec_colors = {
         "STRONG BUY": "#00FF88",
@@ -223,17 +225,15 @@ def build_gauge(score: float, recommendation: str) -> go.Figure:
     }
     color = rec_colors.get(recommendation, "#FFA500")
 
+    # Gauge SIN número — el arco vive en la parte superior de la figura
+    # (domain y=[0.32, 1.0]) dejando espacio limpio abajo para el número.
     fig = go.Figure(go.Indicator(
-        mode="gauge+number+delta",
+        mode="gauge",
         value=score,
-        domain={"x": [0, 1], "y": [0, 1]},
+        domain={"x": [0, 1], "y": [0.32, 1.0]},
         title={
             "text": f"<b>DLP SCORE</b><br><span style='font-size:0.7em;color:{color}'>{recommendation}</span>",
             "font": {"size": 14, "color": TEXT},
-        },
-        number={
-            "font": {"size": 38, "color": color, "family": "JetBrains Mono"},
-            "suffix": "",
         },
         gauge={
             "axis": {
@@ -261,12 +261,23 @@ def build_gauge(score: float, recommendation: str) -> go.Figure:
         },
     ))
 
+    # Número grande COMO ANNOTATION SEPARADA — vive en y=0.12 (bottom 12%)
+    # debajo del arco del gauge. Imposible que se solape.
+    fig.add_annotation(
+        x=0.5, y=0.12,
+        xref="paper", yref="paper",
+        text=f"<b>{score:.0f}</b><span style='font-size:0.45em;color:{MUTED}'>/100</span>",
+        showarrow=False,
+        font=dict(size=44, color=color, family="JetBrains Mono"),
+        align="center",
+    )
+
     fig.update_layout(
         paper_bgcolor=BG_MAIN,
         plot_bgcolor=BG_MAIN,
         font=dict(color=TEXT),
         height=320,
-        margin=dict(l=30, r=30, t=65, b=45),
+        margin=dict(l=20, r=20, t=55, b=20),
     )
 
     return fig
@@ -730,12 +741,11 @@ def build_sentiment_gauge(score: float, height: int = 240) -> go.Figure:
         color, label = RED, "MUY BEARISH"
 
     fig = go.Figure(go.Indicator(
-        mode="gauge+number",
+        mode="gauge",
         value=score,
-        domain={"x": [0, 1], "y": [0, 1]},
+        domain={"x": [0, 1], "y": [0.32, 1.0]},
         title={"text": f"<b>SENTIMIENTO</b><br><span style='font-size:0.75em;color:{color}'>{label}</span>",
                "font": {"size": 12, "color": MUTED}},
-        number={"font": {"size": 34, "color": color, "family": "JetBrains Mono"}, "suffix": ""},
         gauge={
             "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": MUTED,
                      "tickfont": {"size": 8, "color": MUTED}, "dtick": 25},
@@ -751,11 +761,20 @@ def build_sentiment_gauge(score: float, height: int = 240) -> go.Figure:
             ],
         },
     ))
+    # Número GRANDE como annotation separada — nunca se solapa con el arco
+    fig.add_annotation(
+        x=0.5, y=0.12,
+        xref="paper", yref="paper",
+        text=f"<b>{score:.0f}</b><span style='font-size:0.5em;color:{MUTED}'>/100</span>",
+        showarrow=False,
+        font=dict(size=36, color=color, family="JetBrains Mono"),
+        align="center",
+    )
     fig.update_layout(
         paper_bgcolor=BG_MAIN,
         font=dict(color=TEXT),
         height=height + 60,
-        margin=dict(l=30, r=30, t=65, b=45),
+        margin=dict(l=20, r=20, t=55, b=20),
     )
     return fig
 

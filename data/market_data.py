@@ -192,6 +192,25 @@ def get_company_info(ticker: str) -> dict:
         "target_median_yf":    info.get("targetMedianPrice"),
         "num_analysts_yf":     info.get("numberOfAnalystOpinions"),
     }
+
+    # Fallback TradingView: si yfinance.info falló (rate-limit en cloud),
+    # los campos críticos vienen vacíos. Los completamos con TV que no
+    # se rate-limita desde IPs cloud.
+    needs_tv = (not result.get("market_cap") or
+                not result.get("pe_ratio") or
+                not result.get("ev_ebitda") or
+                not result.get("revenue_ttm") or
+                not result.get("profit_margin"))
+    if needs_tv:
+        tv = _get_company_info_from_tradingview(ticker)
+        for k, v in tv.items():
+            # Solo rellenar campos que estén vacíos/None/0
+            if not result.get(k) and v is not None:
+                result[k] = v
+        # Re-derivar name si seguía con el ticker como nombre
+        if result.get("name") == ticker and tv.get("name"):
+            result["name"] = tv["name"]
+
     _save_cache(key, result)
 
     # Sobrescribir con precio en vivo si está disponible (más fresco)
@@ -199,6 +218,86 @@ def get_company_info(ticker: str) -> dict:
     if live:
         result["current_price"] = live
     return result
+
+
+def _get_company_info_from_tradingview(ticker: str) -> dict:
+    """Fallback de fundamentales via TradingView para los campos críticos que
+    se pierden cuando yfinance.info está rate-limitado (Render, Streamlit
+    Cloud, AWS en general)."""
+    try:
+        from tradingview_screener import Query, col
+        q = (
+            Query()
+            .select(
+                "name", "description", "sector", "industry", "close",
+                "market_cap_basic", "price_earnings_ttm",
+                "price_earnings_forward", "enterprise_value_ebitda_ttm",
+                "price_sales_ratio", "price_book_ratio",
+                "dividend_yield_recent", "total_revenue_ttm",
+                "gross_margin", "operating_margin", "net_margin",
+                "return_on_equity", "return_on_assets",
+                "debt_to_equity", "current_ratio_quarterly",
+                "beta_1_year", "average_volume_30d_calc",
+                "price_target_average", "recommendation_mark",
+                "earnings_release_next_date",
+            )
+            .where(col("name") == ticker.upper())
+            .limit(1)
+        )
+        _, df = q.get_scanner_data()
+        if df is None or df.empty:
+            return {}
+
+        row = df.iloc[0]
+
+        def _f(key):
+            v = row.get(key)
+            if v is None:
+                return None
+            try:
+                f = float(v)
+                return f if f == f else None  # NaN check
+            except (TypeError, ValueError):
+                return None
+
+        def _pct_to_dec(key):
+            """TradingView devuelve margins como porcentaje (37.86 = 37.86%).
+            yfinance los devuelve como decimal (0.3786). Convertimos para
+            mantener compatibilidad con el resto del código que asume el
+            formato yfinance (multiplica por 100 al renderizar)."""
+            v = _f(key)
+            return v / 100.0 if v is not None else None
+
+        out = {
+            "name":           str(row.get("description", "") or "") or None,
+            "sector":         str(row.get("sector", "") or "") or None,
+            "industry":       str(row.get("industry", "") or "") or None,
+            "current_price":  _f("close"),
+            "market_cap":     _f("market_cap_basic"),
+            "pe_ratio":       _f("price_earnings_ttm"),
+            "forward_pe":     _f("price_earnings_forward"),
+            "ev_ebitda":      _f("enterprise_value_ebitda_ttm"),
+            "ps_ratio":       _f("price_sales_ratio"),
+            "pb_ratio":       _f("price_book_ratio"),
+            # Margins: TV→decimal para compatibilidad con yfinance
+            "dividend_yield": _pct_to_dec("dividend_yield_recent"),
+            "revenue_ttm":    _f("total_revenue_ttm"),
+            "profit_margin":  _pct_to_dec("net_margin"),
+            "operating_margin_yf": _pct_to_dec("operating_margin"),
+            "gross_margin_yf":     _pct_to_dec("gross_margin"),
+            "roe_yf":              _pct_to_dec("return_on_equity"),
+            "roa_yf":              _pct_to_dec("return_on_assets"),
+            # Ratios sin conversión (mismo formato en YF y TV)
+            "debt_equity_yf":      _f("debt_to_equity"),
+            "current_ratio_yf":    _f("current_ratio_quarterly"),
+            "beta":           _f("beta_1_year"),
+            "avg_volume":     _f("average_volume_30d_calc"),
+            "target_price":   _f("price_target_average"),
+        }
+        # Limpiar None entries
+        return {k: v for k, v in out.items() if v is not None}
+    except Exception:
+        return {}
 
 
 # ── Métricas financieras ───────────────────────────────────────────────────
