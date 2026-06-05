@@ -803,8 +803,51 @@ def get_live_snapshot(tickers: list[str] = None) -> dict:
 
 # ── Análisis de earnings ───────────────────────────────────────────────────
 
+def get_earnings_from_tradingview(ticker: str) -> dict:
+    """Fallback de earnings via TradingView cuando yfinance falla.
+    NO reemplaza a get_earnings_data — solo complementa cuando ese
+    devuelve vacío (rate-limit de Yahoo en cloud)."""
+    try:
+        from tradingview_screener import Query, col
+        from datetime import datetime
+        q = (
+            Query()
+            .select("name", "earnings_release_next_date",
+                    "earnings_release_date", "earnings_per_share_basic_ttm")
+            .where(col("name") == ticker.upper())
+            .limit(1)
+        )
+        _, df = q.get_scanner_data()
+        if df is None or df.empty:
+            return {}
+
+        row = df.iloc[0]
+        result = {}
+        # TradingView devuelve epoch timestamp (segundos)
+        ts_next = row.get("earnings_release_next_date")
+        try:
+            ts_next_val = float(ts_next) if ts_next is not None else 0
+        except (TypeError, ValueError):
+            ts_next_val = 0
+        if ts_next_val > 0:
+            dt_next = datetime.fromtimestamp(int(ts_next_val))
+            days_to_next = (dt_next - datetime.now()).days
+            result["next_earnings"] = dt_next.strftime("%Y-%m-%d")
+            result["days_to_next_earnings"] = days_to_next
+            result["next_earnings_proximity"] = (
+                "🔥 INMINENTE" if days_to_next <= 7 else
+                "⚡ PRÓXIMO"  if days_to_next <= 30 else
+                "📅 LEJANO"
+            )
+        return result
+    except Exception:
+        return {}
+
+
 def get_earnings_data(ticker: str) -> dict:
-    """Earnings con días desde HOY al próximo reporte calculados explícitamente."""
+    """Earnings con días desde HOY al próximo reporte calculados explícitamente.
+    Si yfinance falla (rate-limit en cloud), cae automáticamente a TradingView
+    como fallback para garantizar al menos el next_earnings date."""
     key = f"earnings_{ticker}"
     cached = _load_cache(key, ttl_hours=TTL_EARNINGS)
     if cached:
@@ -863,6 +906,13 @@ def get_earnings_data(ticker: str) -> dict:
                     result["beat_count"] = sum(1 for s in surprises if s["surprise_pct"] > 0)
     except Exception:
         pass
+
+    # Si yfinance no consiguió el next_earnings (rate-limit en cloud típico),
+    # caemos a TradingView que NO tiene rate-limits desde AWS.
+    if not result.get("next_earnings"):
+        tv_fallback = get_earnings_from_tradingview(ticker)
+        if tv_fallback.get("next_earnings"):
+            result.update(tv_fallback)
 
     _save_cache(key, result)
     return result

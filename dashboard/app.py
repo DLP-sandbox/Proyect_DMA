@@ -1575,25 +1575,57 @@ def render_catalysts(analysis: StockAnalysis):
     st.markdown('<div class="section-title-bar">⚡ Catalizadores en el Horizonte</div>',
                 unsafe_allow_html=True)
 
-    next_earn = earnings.get("next_earnings", "—") or km.get("next_earnings", "—")
+    next_earn = earnings.get("next_earnings", "") or km.get("next_earnings", "")
     days_to = earnings.get("days_to_next_earnings")
-    days_str = f"{days_to}d" if days_to is not None else "—"
+    if days_to is not None:
+        days_str = f"{days_to}d"
+        next_tooltip = (f"Próximo reporte: {next_earn}. "
+                        f"Earnings inminentes (<7d) son catalizador de alta volatilidad.")
+        next_color = "#FF3B5C" if days_to < 7 else "#FFB84D" if days_to < 30 else "#4A9EFF"
+    else:
+        days_str = "N/D"
+        next_tooltip = ("Fecha del próximo reporte de resultados no disponible en este momento "
+                        "(la fuente de datos puede estar temporalmente fuera de servicio). "
+                        "Intenta reanalizar en unos minutos.")
+        next_color = "#5A6878"
 
     beat_count = earnings.get("beat_count")
     eh = earnings.get("earnings_history", []) or []
     if eh and beat_count is not None:
         beat_rate_str = f"{beat_count}/{len(eh)}"
+        beat_tooltip = "Trimestres en los que la empresa superó el consenso de EPS en los últimos 8 trimestres."
+        beat_color = "#00FF88"
     else:
-        # Si el agente devolvió "N/A - Historial..." simplemente mostramos "—"
         raw = km.get("earnings_beat_rate", "")
-        beat_rate_str = _clean_tile_value(raw, max_len=10) if raw else "—"
+        if raw:
+            beat_rate_str = _clean_tile_value(raw, max_len=10)
+            beat_tooltip = "Beat rate estimado por el agente de catalizadores."
+            beat_color = "#FFB84D"
+        else:
+            beat_rate_str = "N/D"
+            beat_tooltip = ("Historial de beats no disponible. Requiere datos detallados de earnings "
+                            "que la fuente puede no exponer para todos los tickers.")
+            beat_color = "#5A6878"
 
     avg_surp = earnings.get("avg_surprise")
     if isinstance(avg_surp, (int, float)):
         avg_surp_str = f"{avg_surp:+.1f}%"
+        avg_surp_tooltip = ("Promedio de % sorpresa en EPS sobre el consenso. "
+                            "Positivo y sostenido indica momentum fundamental.")
+        avg_surp_color = ("#00FF88" if avg_surp > 5
+                          else "#FFB84D" if avg_surp > 0
+                          else "#FF3B5C")
     else:
         raw = km.get("avg_earnings_surprise", "")
-        avg_surp_str = _extract_percent(raw) if raw else "—"
+        if raw:
+            avg_surp_str = _extract_percent(raw)
+            avg_surp_tooltip = "Sorpresa promedio estimada por el agente de catalizadores."
+            avg_surp_color = "#FFB84D"
+        else:
+            avg_surp_str = "N/D"
+            avg_surp_tooltip = ("Sorpresa promedio no disponible — requiere historial detallado "
+                                "de earnings que la fuente puede no exponer.")
+            avg_surp_color = "#5A6878"
 
     sentiment_raw = km.get("analyst_sentiment_trend") or "stable"
     sentiment_display = _clean_tile_value(sentiment_raw, max_len=12)
@@ -1603,23 +1635,13 @@ def render_catalysts(analysis: StockAnalysis):
 
     _render_metric_tiles([
         {"icon": "📅", "label": "Próximo Earnings",
-         "value": days_str,
-         "color": "#FF3B5C" if (days_to or 999) < 7 else "#FFB84D" if (days_to or 999) < 30 else "#4A9EFF",
-         "tooltip": f"Fecha próxima: {next_earn}. Earnings inminentes (<7d) son catalizador de alta volatilidad."},
+         "value": days_str, "color": next_color, "tooltip": next_tooltip},
         {"icon": "🎯", "label": "Beat Rate",
-         "value": beat_rate_str,
-         "color": "#00FF88" if beat_rate_str != "—" else "#5A6878",
-         "tooltip": "Trimestres en los que la empresa superó el consenso de EPS en los últimos 8 trimestres."},
+         "value": beat_rate_str, "color": beat_color, "tooltip": beat_tooltip},
         {"icon": "🚀", "label": "Sorpresa Promedio",
-         "value": avg_surp_str,
-         "color": ("#00FF88" if isinstance(avg_surp, (int, float)) and avg_surp > 5
-                   else "#FFB84D" if isinstance(avg_surp, (int, float)) and avg_surp > 0
-                   else "#FF3B5C" if isinstance(avg_surp, (int, float))
-                   else "#5A6878"),
-         "tooltip": "Promedio de % sorpresa en EPS sobre el consenso. Positivo y sostenido indica momentum fundamental."},
+         "value": avg_surp_str, "color": avg_surp_color, "tooltip": avg_surp_tooltip},
         {"icon": "📊", "label": "Tendencia Analistas",
-         "value": sentiment_display,
-         "color": sent_color,
+         "value": sentiment_display, "color": sent_color,
          "tooltip": "Dirección de las revisiones de estimaciones y ratings del consenso (factor de momentum potente)."},
     ])
 

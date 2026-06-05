@@ -232,7 +232,7 @@ def build_gauge(score: float, recommendation: str) -> go.Figure:
             "font": {"size": 14, "color": TEXT},
         },
         number={
-            "font": {"size": 48, "color": color, "family": "JetBrains Mono"},
+            "font": {"size": 42, "color": color, "family": "JetBrains Mono"},
             "suffix": "",
         },
         gauge={
@@ -265,8 +265,8 @@ def build_gauge(score: float, recommendation: str) -> go.Figure:
         paper_bgcolor=BG_MAIN,
         plot_bgcolor=BG_MAIN,
         font=dict(color=TEXT),
-        height=260,
-        margin=dict(l=20, r=20, t=50, b=10),
+        height=270,
+        margin=dict(l=30, r=30, t=55, b=30),
     )
 
     return fig
@@ -735,7 +735,7 @@ def build_sentiment_gauge(score: float, height: int = 240) -> go.Figure:
         domain={"x": [0, 1], "y": [0, 1]},
         title={"text": f"<b>SENTIMIENTO</b><br><span style='font-size:0.75em;color:{color}'>{label}</span>",
                "font": {"size": 12, "color": MUTED}},
-        number={"font": {"size": 38, "color": color, "family": "JetBrains Mono"}, "suffix": ""},
+        number={"font": {"size": 34, "color": color, "family": "JetBrains Mono"}, "suffix": ""},
         gauge={
             "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": MUTED,
                      "tickfont": {"size": 8, "color": MUTED}, "dtick": 25},
@@ -754,8 +754,8 @@ def build_sentiment_gauge(score: float, height: int = 240) -> go.Figure:
     fig.update_layout(
         paper_bgcolor=BG_MAIN,
         font=dict(color=TEXT),
-        height=height,
-        margin=dict(l=15, r=15, t=60, b=10),
+        height=height + 20,
+        margin=dict(l=30, r=30, t=55, b=30),
     )
     return fig
 

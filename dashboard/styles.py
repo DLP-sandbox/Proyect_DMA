@@ -2633,6 +2633,79 @@ button[kind="header"][aria-label*="iew"] {
     box-shadow: 0 4px 14px rgba(255,184,77,0.15) !important;
 }
 
+/* ── 20. RESPONSIVE: iframe CUADRADO (Whop, mobile, tablets) ──────────
+   La app fue diseñada para pantallas wide (16:9). En el iframe de Whop
+   el ratio es casi 1:1 y los componentes que asumen "mucho ancho"
+   (header del análisis, tabs, KPI tiles, status pills, gauges) se
+   apretaban. Estas media queries comprimen tamaños y permiten reflow
+   sin romper el layout original de PC. */
+
+@media (max-width: 900px) {
+    /* Header del análisis — permitir wrap, reducir tamaños, gap menor */
+    .stock-header {
+        flex-wrap: wrap !important;
+        gap: 10px !important;
+        padding: 14px 16px !important;
+    }
+    .stock-header-ticker { font-size: 1.6rem !important; }
+    .stock-header-name   { font-size: 0.85rem !important; }
+    .stock-header-score  { font-size: 1.6rem !important; margin-left: auto !important; }
+    .compound-machine-badge { font-size: 0.62rem !important; padding: 4px 8px !important; }
+
+    /* Tabs del análisis — scroll horizontal smooth en vez de cortarse */
+    [data-testid="stTabs"] > div:first-child {
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+        flex-wrap: nowrap !important;
+        scrollbar-width: thin !important;
+        -webkit-overflow-scrolling: touch !important;
+    }
+    [data-testid="stTabs"] button[data-baseweb="tab"] {
+        padding: 8px 12px !important;
+        font-size: 0.74rem !important;
+        flex-shrink: 0 !important;
+        white-space: nowrap !important;
+    }
+
+    /* KPI tiles — labels en 2 líneas si hace falta, NO truncar con "..." */
+    .kpi-tile {
+        padding: 10px 8px !important;
+        min-height: 76px !important;
+    }
+    .kpi-tile-label {
+        font-size: 0.62rem !important;
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        line-height: 1.15 !important;
+    }
+    .kpi-tile-value { font-size: 1.0rem !important; }
+
+    /* Status pills del sentimiento — mismo tratamiento que KPI tiles */
+    .status-pill {
+        padding: 10px 8px !important;
+        min-height: 76px !important;
+    }
+    .status-pill-label {
+        font-size: 0.62rem !important;
+        white-space: normal !important;
+        overflow: visible !important;
+        line-height: 1.15 !important;
+    }
+    .status-pill-value { font-size: 0.85rem !important; }
+    .status-pill-sub   { font-size: 0.62rem !important; }
+}
+
+@media (max-width: 600px) {
+    /* En iframes verdaderamente angostos, font-sizes aún más chicos */
+    .stock-header-ticker { font-size: 1.3rem !important; }
+    .stock-header-name   { font-size: 0.75rem !important; }
+    .stock-header-score  { font-size: 1.4rem !important; }
+    .kpi-tile-label  { font-size: 0.58rem !important; }
+    .kpi-tile-value  { font-size: 0.9rem  !important; }
+    .status-pill-value { font-size: 0.78rem !important; }
+}
+
 </style>
 """
 
