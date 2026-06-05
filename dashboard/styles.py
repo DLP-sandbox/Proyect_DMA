@@ -386,10 +386,13 @@ h3 { color: #C8D0D8 !important; font-weight: 500 !important; }
     background: linear-gradient(135deg, #0F1419 0%, #131922 100%);
     border: 1px solid rgba(255,184,77,0.1);
     border-radius: 8px;
-    padding: 14px 16px;
+    padding: 12px 10px;
     text-align: center;
     transition: all 0.3s;
     animation: fadeInUp 0.6s ease-out both;
+    /* Garantizar que el contenido no desborde la card */
+    overflow: hidden;
+    min-width: 0;
 }
 
 .market-pulse-card:hover {
@@ -408,16 +411,21 @@ h3 { color: #C8D0D8 !important; font-weight: 500 !important; }
 
 .pulse-value {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 1.2rem;
+    font-size: 1.1rem;
     font-weight: 700;
     color: #FFFFFF;
     margin-bottom: 2px;
+    /* NUNCA romper el número — si no cabe, reduce con clamp/overflow */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: clip;
 }
 
 .pulse-change {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.78rem;
+    font-size: 0.74rem;
     font-weight: 600;
+    white-space: nowrap;
 }
 
 /* ── Sidebar styles ────────────────────────────────────────────────── */
@@ -2708,6 +2716,12 @@ button[kind="header"][aria-label*="iew"] {
     }
     .status-pill-value { font-size: 0.85rem !important; }
     .status-pill-sub   { font-size: 0.62rem !important; }
+
+    /* Live Market Pulse cards — números compactos sin saltos de línea */
+    .market-pulse-card { padding: 8px 6px !important; }
+    .pulse-label  { font-size: 0.55rem !important; letter-spacing: 0.08em !important; }
+    .pulse-value  { font-size: 0.85rem !important; }
+    .pulse-change { font-size: 0.62rem !important; }
 }
 
 @media (max-width: 600px) {
@@ -2718,6 +2732,12 @@ button[kind="header"][aria-label*="iew"] {
     .kpi-tile-label  { font-size: 0.58rem !important; }
     .kpi-tile-value  { font-size: 0.9rem  !important; }
     .status-pill-value { font-size: 0.78rem !important; }
+
+    /* Live Market Pulse — extra compacto */
+    .market-pulse-card { padding: 6px 4px !important; }
+    .pulse-label  { font-size: 0.50rem !important; }
+    .pulse-value  { font-size: 0.78rem !important; }
+    .pulse-change { font-size: 0.58rem !important; }
 }
 
 </style>

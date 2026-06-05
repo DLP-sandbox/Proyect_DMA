@@ -438,14 +438,9 @@ def run_analysis(ticker: str):
 
     _debug_log(f"  bg thread done, result type={type(analysis_result[0]).__name__}")
 
-    # Mostrar 100% completo brevemente antes de limpiar
-    try:
-        current_agent[0] = "✅ Análisis completo"
-        _render_frame(100.0)
-        time.sleep(0.45)
-    except Exception:
-        pass
-
+    # Limpiar el loading INMEDIATAMENTE — sin sleep artificial.
+    # El usuario percibe la transición como instantánea en vez de los
+    # ~450ms de "tiempo muerto" que tenía antes.
     try:
         loading_placeholder.empty()
         status_container.empty()
@@ -458,13 +453,17 @@ def run_analysis(ticker: str):
     st.session_state.quick_view_ticker = None
     st.session_state.analyzing = False
 
-    # Solo guardar a disco si el análisis tiene tesis real (no fallback)
+    # Guardar a disco en background — no bloqueamos el rerun por IO.
+    # El usuario ve el análisis listo en vez de esperar a que termine
+    # el write a disco (que puede tardar 100-300ms).
     thesis_ok = len(getattr(analysis, "investment_thesis", "") or "") > 200
     if thesis_ok:
-        try:
-            disk_save(analysis)
-        except Exception:
-            pass
+        def _save_bg():
+            try:
+                disk_save(analysis)
+            except Exception:
+                pass
+        _threading.Thread(target=_save_bg, daemon=True).start()
 
     st.rerun()
 
@@ -2782,15 +2781,22 @@ def render_welcome():
     ]
 
     def _format_pulse(curr, fmt):
+        """Formato COMPACTO para que NUNCA se rompa el número en cards
+        angostas del iframe cuadrado. Ej: 7383.74 → '7,384' (sin decimales
+        si >= 1000) o 25709 → '25.7K'."""
         if not isinstance(curr, (int, float)):
             return "—"
         if fmt == "yield":
             return f"{curr:.2f}%"
         if fmt == "price":
+            # Gold: $4,353 (sin decimales si >= 1000)
+            if curr >= 1000:
+                return f"${curr:,.0f}"
             return f"${curr:,.2f}"
         if fmt == "index":
-            return f"{curr:,.2f}"
-        # vol, dollar y default: número con 2 decimales
+            # S&P 500, NASDAQ: 7,384 / 25,709 (sin decimales — cabe mejor)
+            return f"{curr:,.0f}"
+        # vol, dollar y default: 2 decimales (cabe siempre)
         return f"{curr:.2f}"
 
     cols = st.columns(6, gap="small")
