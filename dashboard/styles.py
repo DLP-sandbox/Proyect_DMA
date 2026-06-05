@@ -999,14 +999,21 @@ hr {
 
 .kpi-tile-label {
     font-family: 'Inter', sans-serif;
-    font-size: 0.76rem;
+    font-size: 0.74rem;
     color: #C8D0D8;
     font-weight: 500;
     letter-spacing: 0.02em;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    /* Permitir 2 líneas — NUNCA truncar con elipsis. En iframe cuadrado de
+       Whop los labels "Próximo Earnings" / "Sorpresa Promedio" se cortaban
+       con "...". Ahora se ven completos en 2 líneas. */
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    word-break: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.2;
     flex: 1;
+    min-width: 0;
 }
 
 .kpi-tile-value {
@@ -1354,10 +1361,17 @@ hr {
     font-size: 0.62rem;
     color: #7A8898;
     text-transform: uppercase;
-    letter-spacing: 0.13em;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    letter-spacing: 0.10em;
+    /* Permitir 2 líneas siempre — NUNCA truncar (los labels "MOMENTUM",
+       "TEMA NARRATIVO", "SEÑAL CONTRARIA", "RIESGO REPUTACIONAL" se cortaban
+       en iframe cuadrado de Whop). */
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    word-break: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.2;
+    margin-bottom: 6px;
 }
 
 .status-pill-value {

@@ -1589,6 +1589,13 @@ def render_catalysts(analysis: StockAnalysis):
                         "Intenta reanalizar en unos minutos.")
         next_color = "#5A6878"
 
+    def _looks_empty(v):
+        """Detecta si un valor de tile está efectivamente vacío después de limpieza."""
+        if v is None:
+            return True
+        s = str(v).strip()
+        return s in ("", "—", "N/A", "N/D", "None", "null")
+
     beat_count = earnings.get("beat_count")
     eh = earnings.get("earnings_history", []) or []
     if eh and beat_count is not None:
@@ -1597,15 +1604,16 @@ def render_catalysts(analysis: StockAnalysis):
         beat_color = "#00FF88"
     else:
         raw = km.get("earnings_beat_rate", "")
-        if raw:
-            beat_rate_str = _clean_tile_value(raw, max_len=10)
-            beat_tooltip = "Beat rate estimado por el agente de catalizadores."
-            beat_color = "#FFB84D"
-        else:
+        cleaned = _clean_tile_value(raw, max_len=10) if raw else None
+        if _looks_empty(cleaned):
             beat_rate_str = "N/D"
-            beat_tooltip = ("Historial de beats no disponible. Requiere datos detallados de earnings "
+            beat_tooltip = ("Historial de beats no disponible — requiere datos detallados de earnings "
                             "que la fuente puede no exponer para todos los tickers.")
             beat_color = "#5A6878"
+        else:
+            beat_rate_str = cleaned
+            beat_tooltip = "Beat rate estimado por el agente de catalizadores."
+            beat_color = "#FFB84D"
 
     avg_surp = earnings.get("avg_surprise")
     if isinstance(avg_surp, (int, float)):
@@ -1617,15 +1625,16 @@ def render_catalysts(analysis: StockAnalysis):
                           else "#FF3B5C")
     else:
         raw = km.get("avg_earnings_surprise", "")
-        if raw:
-            avg_surp_str = _extract_percent(raw)
-            avg_surp_tooltip = "Sorpresa promedio estimada por el agente de catalizadores."
-            avg_surp_color = "#FFB84D"
-        else:
+        extracted = _extract_percent(raw) if raw else None
+        if _looks_empty(extracted):
             avg_surp_str = "N/D"
             avg_surp_tooltip = ("Sorpresa promedio no disponible — requiere historial detallado "
                                 "de earnings que la fuente puede no exponer.")
             avg_surp_color = "#5A6878"
+        else:
+            avg_surp_str = extracted
+            avg_surp_tooltip = "Sorpresa promedio estimada por el agente de catalizadores."
+            avg_surp_color = "#FFB84D"
 
     sentiment_raw = km.get("analyst_sentiment_trend") or "stable"
     sentiment_display = _clean_tile_value(sentiment_raw, max_len=12)

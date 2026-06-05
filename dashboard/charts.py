@@ -232,7 +232,7 @@ def build_gauge(score: float, recommendation: str) -> go.Figure:
             "font": {"size": 14, "color": TEXT},
         },
         number={
-            "font": {"size": 42, "color": color, "family": "JetBrains Mono"},
+            "font": {"size": 38, "color": color, "family": "JetBrains Mono"},
             "suffix": "",
         },
         gauge={
@@ -265,8 +265,8 @@ def build_gauge(score: float, recommendation: str) -> go.Figure:
         paper_bgcolor=BG_MAIN,
         plot_bgcolor=BG_MAIN,
         font=dict(color=TEXT),
-        height=270,
-        margin=dict(l=30, r=30, t=55, b=30),
+        height=320,
+        margin=dict(l=30, r=30, t=65, b=45),
     )
 
     return fig
@@ -351,7 +351,7 @@ def build_snowflake(snowflake: dict) -> go.Figure:
         paper_bgcolor=BG_MAIN,
         font=dict(color=TEXT),
         height=340,
-        margin=dict(l=80, r=80, t=50, b=50),
+        margin=dict(l=40, r=40, t=55, b=45),
         title=dict(
             text="<b>PERFIL DE CALIDAD</b>",
             font=dict(color=MUTED, size=11),
@@ -754,8 +754,8 @@ def build_sentiment_gauge(score: float, height: int = 240) -> go.Figure:
     fig.update_layout(
         paper_bgcolor=BG_MAIN,
         font=dict(color=TEXT),
-        height=height + 20,
-        margin=dict(l=30, r=30, t=55, b=30),
+        height=height + 60,
+        margin=dict(l=30, r=30, t=65, b=45),
     )
     return fig
 
