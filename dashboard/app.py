@@ -165,31 +165,54 @@ def inject_protection():
             return false;
         }, true);
 
-        // 5. Eliminar branding de Streamlit Cloud (badge, fullscreen, header,
-        // footer, deploy button). El CSS los oculta visualmente; el JS los
-        // remueve del DOM por si Streamlit los reinyecta. MutationObserver
-        // garantiza que se eliminen también cuando se cargan más tarde.
+        // 5. Eliminar branding de Streamlit Cloud — selectores agresivos.
         const HIDE_SELECTORS = [
-            '[class*="viewerBadge"]',
-            '[class*="ViewerBadge"]',
-            '[data-testid="stToolbar"]',
-            '[data-testid="stToolbarActions"]',
-            '[data-testid="stStatusWidget"]',
-            '[data-testid="stDecoration"]',
-            '[data-testid="stHeader"]',
-            '[data-testid="stAppDeployButton"]',
-            '[data-testid="stDeployButton"]',
-            'header[data-testid="stHeader"]',
-            'button[title="View fullscreen"]',
-            'button[title*="ullscreen"]',
-            '#MainMenu',
-            '.stDeployButton',
-            '.stAppDeployButton',
-            'a[href*="streamlit.io"]',
-            'a[href*="share.streamlit.io"]'
+            '[class*="viewerBadge"]', '[class*="ViewerBadge"]',
+            '[class*="appViewerBadge"]', '[class*="stAppViewerBadge"]',
+            '[data-testid*="viewerBadge"]', '[data-testid="stAppViewerBadge"]',
+            '[data-testid="stToolbar"]', '[data-testid="stToolbarActions"]',
+            '[data-testid="stStatusWidget"]', '[data-testid="stDecoration"]',
+            '[data-testid="stHeader"]', '[data-testid="stAppDeployButton"]',
+            '[data-testid="stDeployButton"]', 'header[data-testid="stHeader"]',
+            'button[title="View fullscreen"]', 'button[title*="ullscreen"]',
+            'button[aria-label*="ullscreen"]',
+            '#MainMenu', '.stDeployButton', '.stAppDeployButton',
+            'a[href*="streamlit.io"]', 'a[href*="share.streamlit.io"]',
+            'footer.streamlit-footer', '.stApp > footer', '.stAppFooter',
         ];
 
+        // Búsqueda por TEXTO — el método más robusto porque NO depende de
+        // class names que Streamlit puede cambiar. Si encontramos un elemento
+        // con texto "Built with Streamlit" o "Fullscreen", lo borramos junto
+        // con sus 3 contenedores padres más cercanos.
+        function removeByText(root) {
+            try {
+                var nodes = root.querySelectorAll('a, button, div, span, p, footer');
+                var patterns = ['built with streamlit', 'made with streamlit', 'fullscreen'];
+                for (var i = 0; i < nodes.length; i++) {
+                    var el = nodes[i];
+                    var txt = ((el.textContent || '') + '').trim().toLowerCase();
+                    if (!txt || txt.length > 100) continue;  // skip vacío o muy largo
+                    for (var p = 0; p < patterns.length; p++) {
+                        if (txt === patterns[p] ||
+                            (txt.length < 50 && txt.indexOf(patterns[p]) !== -1)) {
+                            var target = el;
+                            for (var k = 0; k < 3 && target.parentElement &&
+                                 target.parentElement.tagName !== 'BODY' &&
+                                 target.parentElement.tagName !== 'HTML'; k++) {
+                                target = target.parentElement;
+                            }
+                            try { target.remove(); } catch (e) {}
+                            break;
+                        }
+                    }
+                }
+            } catch (e) {}
+        }
+
         function nukeBranding(root) {
+            if (!root) return;
+            // Por selectores conocidos
             try {
                 HIDE_SELECTORS.forEach(function(sel) {
                     var nodes = root.querySelectorAll(sel);
@@ -201,22 +224,27 @@ def inject_protection():
                     }
                 });
             } catch (e) {}
+            // Por texto (catch-all)
+            removeByText(root);
         }
 
-        // Quitar lo que ya esté presente
-        nukeBranding(doc);
+        // Nukear en todos los documentos accesibles: el propio y window.top
+        function nukeEverywhere() {
+            nukeBranding(doc);
+            try { if (window.top && window.top.document) nukeBranding(window.top.document); } catch (e) {}
+            try { if (window.parent && window.parent.document) nukeBranding(window.parent.document); } catch (e) {}
+        }
 
-        // Observer: si Streamlit reinyecta el badge tras una rerun, lo volamos otra vez
+        nukeEverywhere();
         try {
-            const observer = new MutationObserver(function() { nukeBranding(doc); });
+            var observer = new MutationObserver(nukeEverywhere);
             observer.observe(doc.body || doc.documentElement, {
-                childList: true,
-                subtree: true
+                childList: true, subtree: true, attributes: false
             });
         } catch (e) {}
-
-        // Backup: limpieza periódica cada 800ms por si el observer falla
-        setInterval(function() { nukeBranding(doc); }, 800);
+        // Limpieza periódica MUY frecuente (cada 250ms) — garantiza que aunque
+        // Streamlit reinyecte el badge tras un rerun, lo borramos en <500ms.
+        setInterval(nukeEverywhere, 250);
     })();
     </script>
     """, height=0, width=0)
