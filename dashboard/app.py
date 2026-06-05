@@ -51,6 +51,10 @@ st.markdown(BLOOMBERG_CSS, unsafe_allow_html=True)
 
 def init_state():
     from config.settings import SCANNER_DEFAULTS
+    # Bump esta versión cuando cambies SCANNER_DEFAULTS, así fuerza el reset
+    # del session_state de usuarios con filtros viejos en caché.
+    SCANNER_DEFAULTS_VERSION = "v3-2026-06-05"
+
     defaults = {
         "analyses":            {},     # ticker → StockAnalysis (full)
         "selected_ticker":     None,
@@ -68,6 +72,14 @@ def init_state():
     for key, val in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = val
+
+    # Si el usuario tiene una versión vieja de filtros en session_state, la
+    # forzamos a actualizar a los nuevos defaults. Sin esto, los miembros que
+    # ya entraron antes siguen con `rs_strength='fuerte'` y otros viejos
+    # restrictivos en caché.
+    if st.session_state.get("_scanner_defaults_version") != SCANNER_DEFAULTS_VERSION:
+        st.session_state.scanner_filters = dict(SCANNER_DEFAULTS)
+        st.session_state._scanner_defaults_version = SCANNER_DEFAULTS_VERSION
 
     # Helper para validar análisis (tesis real, no fallback)
     def _is_valid_analysis(a):
@@ -205,63 +217,9 @@ def render_sidebar():
             st.session_state._show_scan_results = False
             st.rerun()
 
-        # ── Watchlist (análisis guardados) ──
-        if st.session_state.analyses:
-            st.markdown('<div class="sidebar-section">⊕ Watchlist</div>', unsafe_allow_html=True)
-
-            sorted_analyses = sorted(
-                st.session_state.analyses.items(),
-                key=lambda x: x[1].composite_score,
-                reverse=True,
-            )
-
-            for ticker, analysis in sorted_analyses:
-                rec_emoji = {
-                    "MUY ATRACTIVO": "🟢", "ATRACTIVO": "🔵",
-                    "EN OBSERVACIÓN": "🟡", "EVITAR": "🔴",
-                    # Backward compat para análisis viejos
-                    "STRONG BUY": "🟢", "BUY": "🔵", "WATCH": "🟡", "PASS": "🔴",
-                }.get(analysis.recommendation, "⚪")
-                col_btn, col_score = st.columns([3, 1])
-                with col_btn:
-                    if st.button(f"{rec_emoji} {ticker}", key=f"watch_{ticker}", use_container_width=True):
-                        st.session_state.selected_ticker = ticker
-                        st.session_state.quick_view_ticker = None
-                        st.rerun()
-                with col_score:
-                    color = score_color(analysis.composite_score)
-                    st.markdown(
-                        f'<div style="text-align:center;padding:8px 0;font-family:JetBrains Mono;font-size:0.9rem;font-weight:800;color:{color};">{analysis.composite_score:.0f}</div>',
-                        unsafe_allow_html=True,
-                    )
-
-        # ── Historial de Scans (disco local) ──
-        try:
-            from data.persistence import get_scan_history_labels, load_scan_by_id as disk_load_scan
-            scan_history = get_scan_history_labels()
-        except Exception:
-            scan_history = []
-
-        if scan_history:
-            st.markdown('<div class="sidebar-section">📊 Historial Scans</div>', unsafe_allow_html=True)
-            for scan_id, label, count in scan_history:
-                is_active = st.session_state.current_scan_id == scan_id
-                marker = "▸ " if is_active else ""
-                col_lbl, col_cnt = st.columns([3, 1])
-                with col_lbl:
-                    if st.button(f"{marker}{label}", key=f"scanhist_{scan_id}",
-                                 use_container_width=True,
-                                 help=f"Cargar {label} ({count} resultados)"):
-                        st.session_state.scan_results = disk_load_scan(scan_id)
-                        st.session_state.current_scan_id = scan_id
-                        st.session_state.selected_ticker = None
-                        st.session_state.quick_view_ticker = None
-                        st.rerun()
-                with col_cnt:
-                    st.markdown(
-                        f'<div style="text-align:center;padding:8px 0;font-family:JetBrains Mono;font-size:0.78rem;color:#7A8898;">{count}</div>',
-                        unsafe_allow_html=True,
-                    )
+        # Watchlist e Historial de Scans eliminados — el usuario no los necesita.
+        # Los análisis siguen guardándose en disco (data/persistence.py) por si
+        # en el futuro queremos recuperarlos, pero no se muestran en el sidebar.
 
 
 
@@ -1953,6 +1911,23 @@ def render_agent_tab(analysis: StockAnalysis, agent_key: str):
 
 # ── Scan Results Tab ──────────────────────────────────────────────────────
 def render_scan_results():
+    # ── Top action bar: volver a filtros + volver al home ──
+    col_filters, col_home, _spacer = st.columns([2, 2, 6])
+    with col_filters:
+        if st.button("🔧 Ajustar filtros", key="scan_back_to_filters",
+                     use_container_width=True,
+                     help="Volver al screener para modificar los filtros"):
+            st.session_state.scanner_config_open = True
+            st.session_state._show_scan_results = False
+            st.rerun()
+    with col_home:
+        if st.button("⌂ Volver al Home", key="scan_back_home",
+                     use_container_width=True):
+            st.session_state.scan_results = []
+            st.session_state.current_scan_id = None
+            st.session_state._show_scan_results = False
+            st.rerun()
+
     st.markdown("## 🌐 Resultados del Scan de Mercado")
     n = len(st.session_state.scan_results)
     st.markdown(f"*{n} candidatos pasaron los filtros del screener*")
