@@ -1,0 +1,47 @@
+# ── Secretos (NUNCA subir a GitHub) ────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.streamlit/secrets.toml
+
+# ── Cache y persistencia local (efímeros, se regeneran) ────────────────
+.cache/
+.history/
+
+# ── Python ─────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ── Entornos virtuales ─────────────────────────────────────────────────
+venv/
+env/
+ENV/
+.venv/
+
+# ── Editores / IDE ─────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── macOS ──────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── Logs ───────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Build artifacts ────────────────────────────────────────────────────
+build/
+dist/
+*.tar.gz

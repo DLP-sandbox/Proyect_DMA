@@ -1,0 +1,24 @@
+# Configuración de producción para Streamlit Cloud + iframe en Whop.
+# - browser.gatherUsageStats: off (no enviar telemetría)
+# - server.enableCORS / server.enableXsrfProtection: off para permitir embedding en iframe
+# - theme.base: dark (matchea el diseño Bloomberg)
+
+[browser]
+gatherUsageStats = false
+
+[server]
+enableCORS = false
+enableXsrfProtection = false
+headless = true
+
+[theme]
+base = "dark"
+primaryColor = "#FFB84D"
+backgroundColor = "#0A0D11"
+secondaryBackgroundColor = "#141920"
+textColor = "#E0E0E0"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = false
