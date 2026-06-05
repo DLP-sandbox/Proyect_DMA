@@ -202,6 +202,7 @@ def render_sidebar():
             st.session_state.quick_view_ticker = None
             st.session_state.scan_results = []
             st.session_state.current_scan_id = None
+            st.session_state._show_scan_results = False
             st.rerun()
 
         # ── Watchlist (análisis guardados) ──
@@ -444,15 +445,19 @@ def run_market_scan(filters: Optional[dict] = None):
 
     st.session_state.scan_results = results
     st.session_state.scan_running = False
+    # Forzar mostrar la pantalla de resultados aunque la lista venga vacía
+    # (así el usuario ve "0 candidatos" en vez de ser devuelto al home).
+    st.session_state._show_scan_results = True
 
-    # Persistir el scan al historial en disco
-    try:
-        from data.persistence import save_scan as disk_save_scan
-        scan_id = disk_save_scan(results)
-        if scan_id:
-            st.session_state.current_scan_id = scan_id
-    except Exception:
-        pass
+    # Persistir el scan al historial en disco (solo si hay resultados reales)
+    if results:
+        try:
+            from data.persistence import save_scan as disk_save_scan
+            scan_id = disk_save_scan(results)
+            if scan_id:
+                st.session_state.current_scan_id = scan_id
+        except Exception:
+            pass
 
     st.rerun()
 
@@ -1949,10 +1954,22 @@ def render_agent_tab(analysis: StockAnalysis, agent_key: str):
 # ── Scan Results Tab ──────────────────────────────────────────────────────
 def render_scan_results():
     st.markdown("## 🌐 Resultados del Scan de Mercado")
-    st.markdown(f"*{len(st.session_state.scan_results)} candidatos pasaron los filtros del screener*")
+    n = len(st.session_state.scan_results)
+    st.markdown(f"*{n} candidatos pasaron los filtros del screener*")
 
     if not st.session_state.scan_results:
-        st.info("No hay resultados de scan. Usa el botón '🌐 Scan' en el sidebar.")
+        # Si el flag indica que JUSTO terminó un scan pero quedó vacío,
+        # explicamos por qué (no es un "no hay scan reciente").
+        if st.session_state.get("_show_scan_results"):
+            st.warning(
+                "El scan se ejecutó pero **0 acciones pasaron los filtros**.\n\n"
+                "Causas posibles:\n"
+                "- Los filtros son demasiado estrictos (prueba con menos restricciones).\n"
+                "- Yahoo Finance está rate-limitando temporalmente. Espera 1-2 minutos y vuelve a intentar.\n\n"
+                "Puedes ajustar los filtros desde 'Escanear el Mercado' o lanzar un análisis individual de una acción específica."
+            )
+        else:
+            st.info("No hay resultados de scan. Usa el botón '🌐 Escanear el Mercado' en el home.")
         return
 
 
@@ -2693,7 +2710,7 @@ def main():
         if st.session_state.get("scanner_config_open"):
             render_scanner_config()
             return
-        if st.session_state.scan_results:
+        if st.session_state.scan_results or st.session_state.get("_show_scan_results"):
             render_scan_results()
         else:
             render_welcome()

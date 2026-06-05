@@ -95,8 +95,11 @@ class ScreenerAgent:
             pct_from_52w_high=0, screener_score=50, pass_filters=True,
         )
 
-    def _batch_screen(self, tickers: list[str], batch_size: int = 50, callback=None, filters: Optional[dict] = None) -> list[ScreenerResult]:
-        """Descarga datos en batches para evitar timeouts."""
+    def _batch_screen(self, tickers: list[str], batch_size: int = 20, callback=None, filters: Optional[dict] = None) -> list[ScreenerResult]:
+        """Descarga datos en batches. Batches pequeños (20) para no disparar
+        rate-limit de Yahoo Finance cuando corremos en Streamlit Cloud (IP
+        compartida con muchos otros usuarios de AWS)."""
+        import time
         all_results = []
         total = len(tickers)
         f = filters or DEFAULT_TECHNICAL_FILTERS
@@ -105,18 +108,31 @@ class ScreenerAgent:
             batch = tickers[i:i + batch_size]
             if callback:
                 callback(batch[0], i, total)
-            try:
-                batch_results = self._screen_tickers(batch, filters=f)
-                all_results.extend(batch_results)
-            except Exception:
-                continue
+
+            # Reintentar hasta 2 veces si el batch viene vacío (rate-limit transitorio)
+            batch_results = []
+            for attempt in range(2):
+                try:
+                    batch_results = self._screen_tickers(batch, filters=f)
+                    if batch_results:
+                        break
+                    time.sleep(0.8)  # respiro antes del retry
+                except Exception:
+                    time.sleep(0.8)
+                    continue
+            all_results.extend(batch_results)
+
+            # Micro-pausa entre batches para ser amables con Yahoo
+            time.sleep(0.15)
 
         return all_results
 
     def _screen_tickers(self, tickers: list[str], filters: Optional[dict] = None) -> list[ScreenerResult]:
         """Descarga y procesa un batch de tickers."""
         try:
-            # Download histórico de un año para todos en paralelo
+            # Download histórico de un año para todos en paralelo.
+            # yfinance >= 0.2.50 detecta automáticamente curl_cffi (si está
+            # instalado) y lo usa para esquivar Cloudflare anti-bot.
             raw = yf.download(
                 tickers,
                 period="1y",
