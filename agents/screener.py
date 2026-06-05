@@ -136,7 +136,19 @@ class ScreenerAgent:
     name = "Screener"
 
     def __init__(self):
-        pass
+        # Telemetría de la última corrida (se expone vía property)
+        self._last_universe_count = 0
+        self._last_passing_count = 0
+        self._last_error = None
+
+    @property
+    def last_diagnostics(self) -> dict:
+        """Info diagnóstica del último scan. Útil para debugging en producción."""
+        return {
+            "universe_count": self._last_universe_count,
+            "passing_count": self._last_passing_count,
+            "error": self._last_error,
+        }
 
     # ── API pública ───────────────────────────────────────────────────────
 
@@ -155,6 +167,7 @@ class ScreenerAgent:
             callback("Consultando TradingView…", 5, 100)
 
         df, error = self._fetch_universe()
+        self._last_error = error
         if error:
             if callback:
                 callback(f"Error: {error}", 100, 100)
@@ -189,6 +202,7 @@ class ScreenerAgent:
         # ranking — son las que el usuario retail espera ver primero. El
         # screener_score persistido NO se modifica (solo el orden).
         passing = [r for r in results if r.pass_filters]
+        self._last_passing_count = len(passing)
         passing.sort(key=self._sort_key, reverse=True)
         max_n = int(f.get("max_results", MAX_DEEP_ANALYSIS))
 
@@ -237,8 +251,8 @@ class ScreenerAgent:
 
     def _fetch_universe(self) -> tuple:
         """Consulta TradingView por todas las acciones del NYSE+NASDAQ con
-        market cap > $500M y precio > $5 (filtros ligeros para reducir ruido
-        antes de aplicar los filtros del usuario). Devuelve (df, error_msg)."""
+        market cap > $500M y precio > $5. Devuelve (df, error_msg).
+        Limit 2000 para asegurar buena cobertura aunque haya cacheo en Cloud."""
         try:
             from tradingview_screener import Query, col
             q = (
@@ -251,13 +265,17 @@ class ScreenerAgent:
                     col("market_cap_basic") > 500_000_000,
                 )
                 .order_by("volume", ascending=False)
-                .limit(800)
+                .limit(2000)
             )
             _, df = q.get_scanner_data()
+            # Telemetría: guardar info para mostrar en UI si pocos resultados
+            self._last_universe_count = len(df) if df is not None else 0
             return df, None
         except ImportError as e:
+            self._last_universe_count = 0
             return None, f"tradingview-screener no instalado: {e}"
         except Exception as e:
+            self._last_universe_count = 0
             return None, str(e)
 
     def _get_spy_performance(self) -> dict:

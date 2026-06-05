@@ -394,8 +394,14 @@ def run_market_scan(filters: Optional[dict] = None):
             unsafe_allow_html=True,
         )
 
-    with st.spinner("Escaneando el universo completo (S&P500 + NASDAQ-100)..."):
+    with st.spinner("Escaneando el universo (NYSE + NASDAQ via TradingView)..."):
         results = screener.run_full_scan(callback=scan_callback, filters=filters)
+
+    # Guardar diagnóstico para mostrar en la pantalla de resultados
+    try:
+        st.session_state._scan_diagnostics = screener.last_diagnostics
+    except Exception:
+        st.session_state._scan_diagnostics = {}
 
     progress_bar.progress(1.0)
     progress_placeholder.empty()
@@ -1931,6 +1937,32 @@ def render_scan_results():
     st.markdown("## 🌐 Resultados del Scan de Mercado")
     n = len(st.session_state.scan_results)
     st.markdown(f"*{n} candidatos pasaron los filtros del screener*")
+
+    # ── Diagnóstico del último scan (visible cuando hay pocos resultados) ──
+    diag = st.session_state.get("_scan_diagnostics", {}) or {}
+    universe = diag.get("universe_count", 0)
+    passing = diag.get("passing_count", 0)
+    err = diag.get("error")
+    if universe or err:
+        # Mostrar SIEMPRE el diagnóstico para entender qué pasó
+        if err:
+            color = "#FF3B5C"
+            msg = f"❌ Error de TradingView: {err}"
+        elif universe < 100:
+            color = "#FFB84D"
+            msg = (f"⚠️ TradingView devolvió solo <strong>{universe} acciones</strong> "
+                   f"al universo crudo (esperábamos 1000+). De ellas, <strong>{passing}</strong> "
+                   f"pasaron los filtros. Puede ser rate-limit transitorio — reintenta en 1-2 min.")
+        else:
+            color = "#4A9EFF"
+            msg = (f"✓ TradingView devolvió <strong>{universe} acciones</strong> al universo crudo. "
+                   f"De ellas, <strong>{passing}</strong> pasaron los filtros del usuario.")
+        st.markdown(
+            f'<div style="background:#141920;border-left:3px solid {color};'
+            f'padding:10px 14px;margin:8px 0 16px 0;border-radius:4px;'
+            f'font-size:0.82rem;color:#C8D0D8;">{msg}</div>',
+            unsafe_allow_html=True,
+        )
 
     if not st.session_state.scan_results:
         # Si el flag indica que JUSTO terminó un scan pero quedó vacío,
