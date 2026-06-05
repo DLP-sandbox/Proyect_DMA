@@ -2530,6 +2530,56 @@ img, a {
     -webkit-touch-callout: none !important;
 }
 
+/* ── 18. OCULTAR BRANDING Y CONTROLES DE STREAMLIT CLOUD ──────────────
+   Quitar "Built with Streamlit", botón "Fullscreen", menú hamburguesa,
+   header, footer y cualquier control que la plataforma agregue alrededor
+   de la app. Necesario para que dentro del iframe de Whop se vea como
+   producto propio sin escape al exterior. */
+[class*="viewerBadge"],
+[class*="ViewerBadge"],
+[data-testid="stToolbar"],
+[data-testid="stToolbarActions"],
+[data-testid="stStatusWidget"],
+[data-testid="stDecoration"],
+[data-testid="stHeader"],
+[data-testid="stAppDeployButton"],
+[data-testid="stDeployButton"],
+[data-testid="stActionButtonIcon"],
+header[data-testid="stHeader"],
+.stApp > header,
+.stApp > footer,
+footer.streamlit-footer,
+#MainMenu,
+.stDeployButton,
+.stAppDeployButton,
+button[title="View fullscreen"],
+button[kind="header"],
+button[kind="headerNoPadding"],
+a[href*="streamlit.io"],
+a[href*="streamlit.app/login"],
+iframe[title="streamlit_extras_padding"] + div,
+.element-container:has(> [class*="viewerBadge"]),
+.element-container:has(> button[title*="ullscreen"]) {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    width: 0 !important;
+    max-height: 0 !important;
+    max-width: 0 !important;
+    overflow: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    position: absolute !important;
+    left: -9999px !important;
+}
+
+/* Forzar que el contenido de la app llene el espacio (sin gap inferior
+   del badge eliminado) */
+.stApp {
+    padding-bottom: 0 !important;
+    margin-bottom: 0 !important;
+}
+
 </style>
 """
 

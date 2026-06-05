@@ -164,6 +164,59 @@ def inject_protection():
             e.preventDefault();
             return false;
         }, true);
+
+        // 5. Eliminar branding de Streamlit Cloud (badge, fullscreen, header,
+        // footer, deploy button). El CSS los oculta visualmente; el JS los
+        // remueve del DOM por si Streamlit los reinyecta. MutationObserver
+        // garantiza que se eliminen también cuando se cargan más tarde.
+        const HIDE_SELECTORS = [
+            '[class*="viewerBadge"]',
+            '[class*="ViewerBadge"]',
+            '[data-testid="stToolbar"]',
+            '[data-testid="stToolbarActions"]',
+            '[data-testid="stStatusWidget"]',
+            '[data-testid="stDecoration"]',
+            '[data-testid="stHeader"]',
+            '[data-testid="stAppDeployButton"]',
+            '[data-testid="stDeployButton"]',
+            'header[data-testid="stHeader"]',
+            'button[title="View fullscreen"]',
+            'button[title*="ullscreen"]',
+            '#MainMenu',
+            '.stDeployButton',
+            '.stAppDeployButton',
+            'a[href*="streamlit.io"]',
+            'a[href*="share.streamlit.io"]'
+        ];
+
+        function nukeBranding(root) {
+            try {
+                HIDE_SELECTORS.forEach(function(sel) {
+                    var nodes = root.querySelectorAll(sel);
+                    for (var i = 0; i < nodes.length; i++) {
+                        try {
+                            nodes[i].style.display = 'none';
+                            nodes[i].remove();
+                        } catch (e) {}
+                    }
+                });
+            } catch (e) {}
+        }
+
+        // Quitar lo que ya esté presente
+        nukeBranding(doc);
+
+        // Observer: si Streamlit reinyecta el badge tras una rerun, lo volamos otra vez
+        try {
+            const observer = new MutationObserver(function() { nukeBranding(doc); });
+            observer.observe(doc.body || doc.documentElement, {
+                childList: true,
+                subtree: true
+            });
+        } catch (e) {}
+
+        // Backup: limpieza periódica cada 800ms por si el observer falla
+        setInterval(function() { nukeBranding(doc); }, 800);
     })();
     </script>
     """, height=0, width=0)
