@@ -2580,6 +2580,59 @@ iframe[title="streamlit_extras_padding"] + div,
     margin-bottom: 0 !important;
 }
 
+/* ── 19. OCULTAR SIDEBAR Y SU TOGGLE ──────────────────────────────────
+   El sidebar lateral apretaba demasiado el contenido en el iframe de
+   Whop (que es cuadrado). Lo escondemos completamente y movemos la
+   navegación al cuerpo principal (botón "Volver al Home" centrado). */
+[data-testid="stSidebar"],
+section[data-testid="stSidebar"],
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"],
+[data-testid="stSidebarUserContent"],
+[data-testid="stSidebarHeader"],
+button[kind="header"][aria-label*="ide"],
+button[kind="header"][aria-label*="iew"] {
+    display: none !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    visibility: hidden !important;
+    transform: translateX(-9999px) !important;
+}
+
+/* Sin gap del sidebar, el main content usa 100% del ancho */
+[data-testid="stAppViewContainer"] > section.main,
+[data-testid="stMain"],
+.main .block-container {
+    padding-left: 1.5rem !important;
+    padding-right: 1.5rem !important;
+    max-width: 100% !important;
+    margin-left: 0 !important;
+}
+
+/* Botón "Volver al Home" del top nav — sutil pero claro, tema dark */
+.st-key-topnav_home_btn button,
+[data-testid="stButton"] button[key*="topnav_home"] {
+    background: linear-gradient(135deg, rgba(28,34,44,0.85), rgba(15,18,24,0.95)) !important;
+    border: 1px solid rgba(255,184,77,0.30) !important;
+    color: #FFB84D !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.08em !important;
+    font-size: 0.82rem !important;
+    text-transform: uppercase !important;
+    border-radius: 8px !important;
+    padding: 8px 16px !important;
+    margin-bottom: 14px !important;
+    transition: all 0.2s ease !important;
+}
+
+.st-key-topnav_home_btn button:hover {
+    background: linear-gradient(135deg, rgba(40,48,60,0.95), rgba(20,25,32,1)) !important;
+    border-color: rgba(255,184,77,0.55) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 14px rgba(255,184,77,0.15) !important;
+}
+
 </style>
 """
 

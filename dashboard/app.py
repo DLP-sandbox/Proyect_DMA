@@ -41,7 +41,7 @@ st.set_page_config(
     page_title="DLP Market Analyzer",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 st.markdown(BLOOMBERG_CSS, unsafe_allow_html=True)
@@ -302,6 +302,22 @@ def render_sidebar():
         # Los análisis siguen guardándose en disco (data/persistence.py) por si
         # en el futuro queremos recuperarlos, pero no se muestran en el sidebar.
 
+
+def render_top_nav():
+    """Barra superior compacta con un botón Home centrado. Reemplaza al
+    sidebar lateral en producción (Whop iframe es cuadrado — el sidebar
+    apretaba demasiado el contenido). Solo se muestra en vistas NO-welcome."""
+    col_a, col_home, col_c = st.columns([1, 2, 1])
+    with col_home:
+        if st.button("⌂  Volver al Home", use_container_width=True,
+                     key="topnav_home_btn"):
+            st.session_state.selected_ticker = None
+            st.session_state.quick_view_ticker = None
+            st.session_state.scan_results = []
+            st.session_state.current_scan_id = None
+            st.session_state._show_scan_results = False
+            st.session_state.scanner_config_open = False
+            st.rerun()
 
 
 # ── Run Analysis ──────────────────────────────────────────────────────────
@@ -2783,7 +2799,19 @@ def render_welcome():
 # ── Main App ──────────────────────────────────────────────────────────────
 def main():
     render_header()
-    render_sidebar()
+
+    # En lugar del sidebar lateral, mostramos un botón "Volver al Home"
+    # centrado arriba SOLO cuando el usuario no está en la welcome screen.
+    # En welcome ya hay un hero claro — no se necesita botón redundante.
+    in_welcome = (
+        not st.session_state.get("selected_ticker") and
+        not st.session_state.get("quick_view_ticker") and
+        not st.session_state.scan_results and
+        not st.session_state.get("scanner_config_open") and
+        not st.session_state.get("_show_scan_results")
+    )
+    if not in_welcome:
+        render_top_nav()
 
     selected = st.session_state.selected_ticker
     qv = st.session_state.get("quick_view_ticker")
