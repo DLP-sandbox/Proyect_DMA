@@ -62,20 +62,23 @@ MAX_DEEP_ANALYSIS = 20
 SCANNER_DEFAULTS = {
     # Tamaño de la empresa — lista de buckets activos (multi-select)
     "size_buckets": ["mega", "grande", "mediana", "pequena", "micro"],
-    # Tendencia técnica — lista de stages activos (multi-select)
-    "stages": [1, 2],
-    # Fortaleza relativa vs S&P 500 — single
-    "rs_strength": "fuerte",          # muy_fuerte | fuerte | promedio | debil | cualquiera
-    # Momentum últimos 6 meses — single
+    # Tendencia técnica — lista de stages activos (multi-select).
+    # Por default permitimos los 4 stages para que el usuario VEA mucho;
+    # luego puede filtrar a Stage 2 (alcista) si quiere ser quirúrgico.
+    "stages": [1, 2, 3, 4],
+    # Fortaleza relativa vs S&P 500. Default "cualquiera" para mostrar el
+    # universo amplio; el usuario puede subirlo a "fuerte" si quiere precisión.
+    "rs_strength": "cualquiera",      # muy_fuerte | fuerte | promedio | debil | cualquiera
+    # Momentum últimos 6 meses
     "momentum_6m": "cualquiera",      # aceleracion | positivo | negativo | cualquiera
-    # Cercanía al máximo anual — single
+    # Cercanía al máximo anual
     "proximity_high": "cualquiera",   # cerca | media | lejos | cualquiera
     # Sectores de interés — lista (multi-select). [] = todos
     "sectors": [],
-    # Liquidez mínima — single
-    "liquidity": "media",             # alta | media | baja
-    # Cantidad de resultados — single
-    "max_results": 20,                # 20 | 50 | 100 | 9999 (todos)
+    # Liquidez mínima — "baja" por default (acepta hasta 500K volumen diario)
+    "liquidity": "baja",              # alta | media | baja
+    # Cantidad de resultados — 100 por default para una vista amplia
+    "max_results": 100,               # 20 | 50 | 100 | 9999 (todos)
 }
 
 # Catálogo de sectores soportados (deben matchear los strings que devuelve yfinance)

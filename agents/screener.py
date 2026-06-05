@@ -184,9 +184,12 @@ class ScreenerAgent:
         if callback:
             callback("Aplicando filtros…", 90, 100)
 
-        # Filtros + sort + límite (misma lógica que la versión anterior)
+        # Filtros + sort + límite. El sort incluye un bonus por market cap
+        # para que las acciones grandes (NVDA, AAPL, MSFT, ...) suban en el
+        # ranking — son las que el usuario retail espera ver primero. El
+        # screener_score persistido NO se modifica (solo el orden).
         passing = [r for r in results if r.pass_filters]
-        passing.sort(key=lambda x: x.screener_score, reverse=True)
+        passing.sort(key=self._sort_key, reverse=True)
         max_n = int(f.get("max_results", MAX_DEEP_ANALYSIS))
 
         if callback:
@@ -369,6 +372,10 @@ class ScreenerAgent:
             return False
 
         allowed_stages = f.get("allowed_stages") or [1, 2]
+        # Si el usuario quiere "todos los stages" (1-4), también aceptar
+        # stage=0 (no calificable). De lo contrario perdería acciones nuevas.
+        if set(allowed_stages) >= {1, 2, 3, 4}:
+            allowed_stages = list(set(allowed_stages) | {0})
         if stage not in allowed_stages:
             return False
 
@@ -412,21 +419,50 @@ class ScreenerAgent:
         except (TypeError, ValueError):
             return 0.0
 
+    @staticmethod
+    def _sort_key(r) -> float:
+        """Score de ordenamiento = screener_score + bonus por market cap.
+        Esto sube las acciones más grandes en el ranking (las que el usuario
+        retail conoce y espera). NO modifica el screener_score persistido."""
+        mc = r.market_cap or 0
+        if mc > 500_000_000_000:    bonus = 25  # >$500B (NVDA, AAPL, MSFT, GOOGL)
+        elif mc > 200_000_000_000:  bonus = 18  # >$200B (AMZN, META, AMD, TSLA…)
+        elif mc > 50_000_000_000:   bonus = 12  # >$50B
+        elif mc > 10_000_000_000:   bonus = 6   # >$10B
+        elif mc > 2_000_000_000:    bonus = 2   # >$2B
+        else:                        bonus = 0   # micro / penny stocks
+        return r.screener_score + bonus
+
     def _stage_analysis(self, price, sma50, sma150, sma200) -> int:
-        """Stage Analysis (Minervini). Idéntico a la versión anterior."""
-        if not all([sma50, sma150, sma200]):
-            return 0
-        c1 = price > sma150 and price > sma200
-        c2 = sma150 > sma200
-        c3 = price > sma50
-        c4 = sma50 > sma150
-        if c1 and c2 and c3 and c4:
-            return 2
-        if price > sma200:
-            return 1
-        if price < sma200 and price > sma150:
-            return 3
-        return 4
+        """Stage Analysis (Minervini). Si faltan SMAs largas (acción nueva o
+        con poco histórico), aproxima usando lo que tengamos para no quedar
+        en stage 0 (descartado). Esto evita perder acciones legítimas."""
+        # Caso ideal — todas las SMAs disponibles (algoritmo Minervini puro)
+        if sma50 and sma150 and sma200:
+            c1 = price > sma150 and price > sma200
+            c2 = sma150 > sma200
+            c3 = price > sma50
+            c4 = sma50 > sma150
+            if c1 and c2 and c3 and c4:
+                return 2
+            if price > sma200:
+                return 1
+            if price < sma200 and price > sma150:
+                return 3
+            return 4
+
+        # Aproximación — solo tenemos SMA50 (acción recientemente listada)
+        if sma50:
+            if price > sma50:
+                # Sin SMA200 no podemos confirmar Stage 2, pero está en
+                # tendencia alcista corta → la marcamos como Stage 1
+                # (acumulación / temprano alcista).
+                return 1
+            return 4  # debajo de SMA50 → tendencia bajista corta
+
+        # Sin ninguna SMA — acción demasiado nueva, marcamos como Stage 1
+        # (en lugar de 0) para que pase si el usuario incluye stage 1.
+        return 1
 
     def _compute_screener_score(self, stage, rs_score, mom_6m, mom_3m,
                                 pct_from_high, avg_vol) -> float:
