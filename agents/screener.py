@@ -38,11 +38,12 @@ DEFAULT_TECHNICAL_FILTERS = {
 }
 
 
-# Mismas columnas de TradingView usadas en run_full_scan y quick_validate
+# Columnas que pedimos a TradingView en cada query
 _TV_COLUMNS = [
     "name",                       # ticker
     "description",                # nombre empresa
-    "sector",                     # sector GICS
+    "sector",                     # sector TRBC (Thomson Reuters)
+    "industry",                   # industry TRBC — usado para detectar REITs
     "close",                      # precio actual
     "market_cap_basic",           # market cap
     "average_volume_30d_calc",    # volumen promedio 30d
@@ -56,6 +57,60 @@ _TV_COLUMNS = [
     "price_52_week_high",         # max 52W
     "RSI",                        # RSI 14
 ]
+
+
+# ── Mapping de sectores TRBC (TradingView) → GICS (lo que usa el UI) ───────
+# Los scanner_filters.py del UI usan nombres GICS estándar:
+# Technology, Healthcare, Financial Services, Consumer Cyclical,
+# Consumer Defensive, Communication Services, Industrials, Energy,
+# Real Estate, Utilities, Basic Materials.
+# TradingView devuelve nombres TRBC distintos — los traducimos al GICS del UI
+# para que el filtro de sectores del usuario funcione y los sectores se vean
+# familiares en la tabla de resultados.
+_TRBC_TO_GICS = {
+    # Tecnología
+    "Electronic Technology":    "Technology",
+    "Technology Services":      "Technology",
+    # Salud
+    "Health Technology":        "Healthcare",
+    "Health Services":          "Healthcare",
+    # Financiero (REITs se detectan via industry, ver _normalize_sector)
+    "Finance":                  "Financial Services",
+    # Consumo discrecional (cíclico)
+    "Consumer Durables":        "Consumer Cyclical",
+    "Consumer Services":        "Consumer Cyclical",
+    "Retail Trade":             "Consumer Cyclical",
+    # Consumo defensivo (estable)
+    "Consumer Non-Durables":    "Consumer Defensive",
+    "Distribution Services":    "Consumer Defensive",
+    # Comunicaciones
+    "Communications":           "Communication Services",
+    # Industriales
+    "Producer Manufacturing":   "Industrials",
+    "Industrial Services":      "Industrials",
+    "Commercial Services":      "Industrials",
+    "Transportation":           "Industrials",
+    # Energía
+    "Energy Minerals":          "Energy",
+    # Utilities (mismo nombre)
+    "Utilities":                "Utilities",
+    # Materiales básicos
+    "Non-Energy Minerals":      "Basic Materials",
+    "Process Industries":       "Basic Materials",
+}
+
+
+def _normalize_sector(trbc_sector: str, industry: str) -> str:
+    """Convierte un sector TRBC de TradingView al equivalente GICS que usa el
+    UI. Detecta REITs por industry (van en 'Finance' en TRBC pero pertenecen
+    a 'Real Estate' en GICS). Lo desconocido cae en 'Other'."""
+    if not trbc_sector:
+        return "Other"
+    industry_low = (industry or "").lower()
+    # REITs y empresas inmobiliarias → Real Estate
+    if "real estate" in industry_low or "reit" in industry_low:
+        return "Real Estate"
+    return _TRBC_TO_GICS.get(trbc_sector, "Other")
 
 
 @dataclass
@@ -234,7 +289,10 @@ class ScreenerAgent:
                 return None
 
             name = str(row.get("description", ticker) or ticker)
-            sector = str(row.get("sector", "Unknown") or "Unknown")
+            # Convertir sector TRBC (TradingView) → GICS (lo que espera el UI)
+            trbc_sector = str(row.get("sector", "") or "")
+            industry = str(row.get("industry", "") or "")
+            sector = _normalize_sector(trbc_sector, industry)
 
             price = self._safe_float(row.get("close"))
             mktcap = self._safe_float(row.get("market_cap_basic"))
