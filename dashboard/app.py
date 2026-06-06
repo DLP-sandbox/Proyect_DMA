@@ -465,6 +465,11 @@ def run_analysis(ticker: str):
                 pass
         _threading.Thread(target=_save_bg, daemon=True).start()
 
+    # Marcar el timestamp para activar el cooldown de 10 min de la sesión.
+    # Solo se registra cuando un análisis NUEVO se completó (no en cache hits
+    # ni en errores — esos no gastaron créditos).
+    st.session_state._last_analysis_finished_at = time.time()
+
     st.rerun()
 
 
@@ -2721,10 +2726,23 @@ def render_welcome():
             # Si escribió "FAKE123" → muestra "no encontrado en NYSE/NASDAQ".
             from data.market_data import validate_ticker
             is_valid, clean_ticker, error_msg = validate_ticker(ticker_input)
-            if is_valid:
-                run_analysis(clean_ticker)
-            else:
+            if not is_valid:
                 st.error(error_msg)
+            else:
+                # Cooldown de 10 min entre análisis — vive SOLO en st.session_state
+                # (RAM volátil de la sesión actual). Recargar la pestaña lo resetea
+                # por diseño. Es un freno suave para no saturar el servidor.
+                ANALYSIS_COOLDOWN_SEC = 600  # 10 minutos
+                last_finished = st.session_state.get("_last_analysis_finished_at", 0)
+                elapsed = time.time() - last_finished
+                if elapsed < ANALYSIS_COOLDOWN_SEC:
+                    remaining_min = max(1, int(round((ANALYSIS_COOLDOWN_SEC - elapsed) / 60)))
+                    st.warning(
+                        f"⏳ Tienes un cooldown de ~**{remaining_min} min** activo "
+                        f"para no saturar el servidor."
+                    )
+                else:
+                    run_analysis(clean_ticker)
         if scan_btn:
             # Abre la página de configuración del scanner (no corre scan directo)
             st.session_state.scanner_config_open = True
