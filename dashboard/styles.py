@@ -2754,6 +2754,71 @@ button[kind="header"][aria-label*="iew"] {
     }
 }
 
+/* ── 21. INFO ROWS DEL OVERVIEW (Empresa, Ticker, Sector, Horizonte) ──
+   Layout GRID en vez de flex para que el value (especialmente "Horizonte"
+   que puede ser un texto largo del LLM) NO se solape con el key. Máximo
+   2 líneas con line-clamp + ellipsis. */
+.overview-info-row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 14px;
+    padding: 5px 0;
+    border-bottom: 1px solid #1E2530;
+    align-items: start;
+}
+.overview-info-key {
+    color: #7A8898;
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+.overview-info-value {
+    color: #E0E0E0;
+    font-size: 0.8rem;
+    font-weight: 500;
+    text-align: right;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.3;
+    word-break: break-word;
+    min-width: 0;
+}
+
+/* ── 22. SECTION SPINNERS — para Tickers Populares y Live Market Pulse ──
+   Cuando esas secciones están cargando datos de red, mostramos un círculo
+   girando + texto debajo, así el usuario sabe que hay algo cargando ahí
+   abajo en vez de pensar que la app está rota. */
+.section-spinner-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 28px 0 24px;
+    gap: 12px;
+    animation: fadeIn 0.4s ease-out;
+}
+.section-spinner {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 184, 77, 0.12);
+    border-top-color: #FFB84D;
+    animation: spin 0.9s linear infinite;
+}
+.section-spinner-text {
+    color: #7A8898;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    animation: fade-soft 1.6s ease-in-out infinite;
+}
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
 @media (max-width: 600px) {
     /* En iframes verdaderamente angostos, font-sizes aún más chicos */
     .stock-header-ticker { font-size: 1.3rem !important; }

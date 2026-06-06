@@ -933,10 +933,13 @@ def render_overview(analysis: StockAnalysis):
             "Horizonte": analysis.time_horizon,
         }
         for k, v in info_data.items():
+            # Layout grid (NO flex) — evita que key y value se solapen
+            # cuando el value es largo (típicamente el Horizonte). El value
+            # se limita a 2 líneas con line-clamp; resto se trunca con "...".
             st.markdown(
-                f'<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #1E2530;">'
-                f'<span style="color:#7A8898;font-size:0.8rem;">{k}</span>'
-                f'<span style="color:#E0E0E0;font-size:0.8rem;font-weight:500;">{v}</span>'
+                f'<div class="overview-info-row">'
+                f'<span class="overview-info-key">{k}</span>'
+                f'<span class="overview-info-value">{v}</span>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -2720,13 +2723,24 @@ def render_welcome():
     # ── Quick Access Tickers ──────────────────────────────────────────
     st.markdown('<div class="section-header">⊕  Acceso Rápido — Tickers Populares</div>', unsafe_allow_html=True)
 
+    # Spinner visible mientras cargan los precios en vivo (~1-3s)
+    tickers_loader = st.empty()
+    tickers_loader.markdown("""
+    <div class="section-spinner-wrap">
+        <div class="section-spinner"></div>
+        <div class="section-spinner-text">Cargando precios en vivo…</div>
+    </div>
+    """, unsafe_allow_html=True)
+
     from data.market_data import get_live_snapshot
     snapshot = {}
     try:
-        with st.spinner(""):
-            snapshot = get_live_snapshot(POPULAR_TICKERS)
+        snapshot = get_live_snapshot(POPULAR_TICKERS)
     except Exception:
         pass
+
+    # Quitar el spinner — vamos a renderizar las cards reales abajo
+    tickers_loader.empty()
 
     # Grid 6 cols x 2 rows — layout multi-línea + botón invisible overlay
     rows = [POPULAR_TICKERS[:6], POPULAR_TICKERS[6:12]]
@@ -2767,11 +2781,23 @@ def render_welcome():
     # ── Live Market Pulse ─────────────────────────────────────────────
     st.markdown('<div class="section-header">📡  Live Market Pulse</div>', unsafe_allow_html=True)
 
+    # Spinner mientras cargan los datos macro (~2-5s — el más lento)
+    macro_loader = st.empty()
+    macro_loader.markdown("""
+    <div class="section-spinner-wrap">
+        <div class="section-spinner"></div>
+        <div class="section-spinner-text">Cargando índices y sectores…</div>
+    </div>
+    """, unsafe_allow_html=True)
+
     from data.market_data import get_macro_data
     try:
         macro = get_macro_data()
     except Exception:
         macro = {}
+
+    # Quitar el spinner — vamos a renderizar los datos reales abajo
+    macro_loader.empty()
 
     # (label, key del macro, formato del valor)
     pulse_items = [
