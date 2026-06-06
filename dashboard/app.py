@@ -2714,7 +2714,17 @@ def render_welcome():
             scan_btn = st.button("🌐  Escanear el Mercado", use_container_width=True, key="hero_scan", type="primary")
 
         if analyze_btn and ticker_input:
-            run_analysis(ticker_input)
+            # Validar el ticker ANTES de gastar créditos de Anthropic.
+            # validate_ticker() es gratis (~200ms via TradingView, sin Claude).
+            # Si el usuario escribió "NVDA " con espacio → lo limpia a "NVDA".
+            # Si escribió "NVD@" → muestra error claro, no lanza análisis.
+            # Si escribió "FAKE123" → muestra "no encontrado en NYSE/NASDAQ".
+            from data.market_data import validate_ticker
+            is_valid, clean_ticker, error_msg = validate_ticker(ticker_input)
+            if is_valid:
+                run_analysis(clean_ticker)
+            else:
+                st.error(error_msg)
         if scan_btn:
             # Abre la página de configuración del scanner (no corre scan directo)
             st.session_state.scanner_config_open = True

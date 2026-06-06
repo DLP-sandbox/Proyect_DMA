@@ -3,11 +3,12 @@ Capa unificada de datos de mercado. Usa yfinance como fuente primaria
 con caché local en JSON para minimizar llamadas a la API.
 """
 import json
+import re
 import time
 import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -19,6 +20,103 @@ warnings.filterwarnings("ignore")
 
 CACHE_DIR = Path(__file__).parent.parent / ".cache"
 CACHE_DIR.mkdir(exist_ok=True)
+
+
+# ── Validación de ticker (rápida, gratis — NO usa Anthropic) ──────────────
+
+# Regex de caracteres permitidos en un ticker NYSE/NASDAQ.
+# Acepta letras A-Z, dígitos 0-9 y guion `-` (ej: BRK-B, BF-B, AAPL, 8011).
+_TICKER_PATTERN = re.compile(r"^[A-Z0-9\-]{1,10}$")
+
+
+def validate_ticker(raw_input: str) -> Tuple[bool, str, str]:
+    """Valida un ticker manual ANTES de lanzar el análisis.
+
+    Hace 3 cosas:
+      1. Limpia el input (trim espacios, mayúsculas, `.` → `-` para BRK.B).
+      2. Verifica que solo contenga letras, dígitos y guion (regex).
+      3. Confirma que existe en NYSE/NASDAQ vía TradingView (gratis, ~200ms).
+
+    Retorna `(is_valid, clean_ticker, error_message)`:
+      - `(True, "NVDA", "")` si todo OK.
+      - `(False, "", "mensaje claro")` si hay error de chars o no existe.
+
+    IMPORTANTE: NO usa Anthropic API. Si TradingView falla por cualquier
+    razón (network, rate-limit), retorna `(True, clean, "")` para NO
+    bloquear injustamente al usuario — el análisis después fallará gracefully
+    si el ticker realmente no existe."""
+    if not raw_input or not str(raw_input).strip():
+        return False, "", "Por favor introduce un ticker para analizar."
+
+    # 1. Limpieza: espacios fuera, mayúsculas, `.` → `-` (BRK.B → BRK-B)
+    clean = str(raw_input).strip().upper().replace(".", "-")
+
+    if not clean:
+        return False, "", "Por favor introduce un ticker para analizar."
+
+    # 2. Validación de caracteres (solo A-Z, 0-9, guion; máx 10 chars)
+    if not _TICKER_PATTERN.match(clean):
+        return False, "", (
+            f"⚠️ El ticker **\"{str(raw_input).strip()}\"** contiene "
+            f"caracteres inválidos. Solo se permiten letras (A-Z), dígitos "
+            f"(0-9) y guion (-). Ejemplos válidos: NVDA, AAPL, BRK-B."
+        )
+
+    # 3. Verificación de existencia con TradingView (gratis, ~200ms, sin
+    #    rate-limit desde IPs cloud). Buscamos en AMBOS formatos posibles
+    #    porque TradingView lista algunos tickers con punto (BRK.B) mientras
+    #    yfinance/nuestro código usa guion (BRK-B).
+    try:
+        from tradingview_screener import Query, col
+
+        def _search_tv(needle: str):
+            try:
+                _, df = (
+                    Query()
+                    .select("name", "exchange", "type")
+                    .where(col("name") == needle)
+                    .limit(3)
+                    .get_scanner_data()
+                )
+                return df
+            except Exception:
+                return None
+
+        # Primero intentar con el clean tal cual (BRK-B / NVDA / AAPL)
+        df = _search_tv(clean)
+        # Si no se encontró Y tiene guion, probar con punto (TradingView usa
+        # ese formato para algunas clases B de mega-caps tipo BRK.B, BF.B)
+        if (df is None or df.empty) and "-" in clean:
+            df = _search_tv(clean.replace("-", "."))
+
+        if df is None or df.empty:
+            return False, "", (
+                f"⚠️ El ticker **\"{clean}\"** no se encontró en NYSE/NASDAQ. "
+                f"Verifica que esté bien escrito. Ejemplos: NVDA, AAPL, MSFT, "
+                f"GOOGL, BRK-B."
+            )
+
+        # Confirmar que está en NYSE o NASDAQ (filtramos OTC/internacionales
+        # porque la app no tiene datos confiables fuera de esos exchanges)
+        for _, row in df.iterrows():
+            exchange = str(row.get("exchange", "")).upper()
+            if exchange in ("NYSE", "NASDAQ"):
+                # Devolvemos el `clean` con guion para que sea compatible con
+                # yfinance/persistencia (BRK-B, no BRK.B).
+                return True, clean, ""
+
+        # Existe pero no en NYSE/NASDAQ
+        first_exchange = str(df.iloc[0].get("exchange", "")).upper()
+        return False, "", (
+            f"⚠️ El ticker **\"{clean}\"** existe pero cotiza en "
+            f"**{first_exchange}**, no en NYSE/NASDAQ. Esta app solo soporta "
+            f"acciones de mercados estadounidenses."
+        )
+    except Exception:
+        # Network/TV falló — NO bloquear al usuario, dejar que el análisis
+        # corra y falle ahí si el ticker realmente no existe. Esto evita
+        # falsos negativos por problemas transitorios de red.
+        return True, clean, ""
 
 
 # ── Helpers de caché ──────────────────────────────────────────────────────
