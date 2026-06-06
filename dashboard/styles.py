@@ -2730,9 +2730,25 @@ button[kind="header"][aria-label*="iew"] {
         [data-testid="stButton"] > button[kind="primary"],
     [data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"])
         [data-testid="stButton"] > button[kind="secondary"] {
-        padding: 12px 18px !important;
-        font-size: 0.78rem !important;
-        letter-spacing: 0.05em !important;
+        padding: 10px 8px !important;
+        font-size: 0.72rem !important;
+        letter-spacing: 0.03em !important;
+        white-space: nowrap !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+    }
+}
+
+/* Iframe ANGOSTO (Whop con sidebar): forzar que TODO el texto del botón
+   quepa, incluso a costa de tamaño aún más chico. */
+@media (max-width: 700px) {
+    [data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"])
+        [data-testid="stButton"] > button[kind="primary"],
+    [data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"])
+        [data-testid="stButton"] > button[kind="secondary"] {
+        padding: 10px 6px !important;
+        font-size: 0.66rem !important;
+        letter-spacing: 0.02em !important;
     }
 }
 

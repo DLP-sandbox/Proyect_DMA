@@ -2687,10 +2687,10 @@ def render_welcome():
     """, unsafe_allow_html=True)
 
     # ── Action Card central — input + 2 botones en una caja unificada ──
-    # Ratio [1, 5, 1] da al centro ~71% del viewport. En el iframe cuadrado
-    # de Whop (~700px) eso le da a "🌐 Escanear el Mercado" suficiente espacio
-    # para no cortarse (antes con [1, 3, 1] se cortaba "ESCANEAR EL M...").
-    _, center_col, _ = st.columns([1, 5, 1])
+    # Ratio [1, 12, 1] da al centro ~86% del viewport. En el iframe cuadrado
+    # de Whop (~700px) con el sidebar de Whop quitando ancho, este ratio es
+    # el mínimo que permite que "🌐 ESCANEAR EL MERCADO" se vea COMPLETO.
+    _, center_col, _ = st.columns([1, 12, 1])
 
     with center_col:
         st.markdown('<div class="action-label-new">◇  ANALIZA UNA ACCIÓN O ESCANEA EL MERCADO COMPLETO</div>', unsafe_allow_html=True)
