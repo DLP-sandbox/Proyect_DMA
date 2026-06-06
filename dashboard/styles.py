@@ -2722,6 +2722,18 @@ button[kind="header"][aria-label*="iew"] {
     .pulse-label  { font-size: 0.55rem !important; letter-spacing: 0.08em !important; }
     .pulse-value  { font-size: 0.85rem !important; }
     .pulse-change { font-size: 0.62rem !important; }
+
+    /* Botones de la action card del home — padding más compacto y font un
+       poquito más chico para que "🌐 ESCANEAR EL MERCADO" quepa completo en
+       el iframe cuadrado de Whop sin cortarse. */
+    [data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"])
+        [data-testid="stButton"] > button[kind="primary"],
+    [data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"])
+        [data-testid="stButton"] > button[kind="secondary"] {
+        padding: 12px 18px !important;
+        font-size: 0.78rem !important;
+        letter-spacing: 0.05em !important;
+    }
 }
 
 @media (max-width: 600px) {

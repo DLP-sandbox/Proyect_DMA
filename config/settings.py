@@ -9,8 +9,11 @@ load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
 # ── Anthropic ──────────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
-# Models: orchestrator usa Sonnet (mayor razonamiento), sub-agentes Haiku (velocidad)
-ORCHESTRATOR_MODEL = "claude-sonnet-4-6"
+# Models: TODO con Haiku 4.5 para optimizar costos (~55% más barato vs Sonnet).
+# La calidad de la síntesis es muy buena porque el orquestador solo combina
+# los sub-reportes ya escritos; no hace razonamiento desde cero.
+# Para volver a Sonnet en el orquestador: ORCHESTRATOR_MODEL = "claude-sonnet-4-6"
+ORCHESTRATOR_MODEL = "claude-haiku-4-5-20251001"
 SUBAGENT_MODEL = "claude-haiku-4-5-20251001"
 
 # ── APIs opcionales ────────────────────────────────────────────────────────
