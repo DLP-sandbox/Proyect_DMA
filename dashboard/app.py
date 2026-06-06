@@ -2856,8 +2856,23 @@ def render_welcome():
     sector_perf = macro.get("sector_performance", {}) if macro else {}
     if sector_perf:
         st.markdown('<div class="section-header">🌍  Rotación Sectorial (1Y)</div>', unsafe_allow_html=True)
+
+        # Spinner independiente mientras se construye el heatmap de Plotly
+        # (~200-500ms) — feedback visual consistente con las otras 2 secciones.
+        sector_loader = st.empty()
+        sector_loader.markdown("""
+        <div class="section-spinner-wrap">
+            <div class="section-spinner"></div>
+            <div class="section-spinner-text">Cargando rotación sectorial…</div>
+        </div>
+        """, unsafe_allow_html=True)
+
         from dashboard.charts import build_sector_heatmap
         fig = build_sector_heatmap(sector_perf)
+
+        # Quitar el spinner — vamos a renderizar el heatmap abajo
+        sector_loader.empty()
+
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
                         key="chart_welcome_sector_heatmap")
 
