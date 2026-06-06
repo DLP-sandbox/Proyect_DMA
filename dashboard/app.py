@@ -2686,11 +2686,11 @@ def render_welcome():
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Action Card central — input + 2 botones en una caja unificada ──
-    # Ratio [1, 12, 1] da al centro ~86% del viewport. En el iframe cuadrado
-    # de Whop (~700px) con el sidebar de Whop quitando ancho, este ratio es
-    # el mínimo que permite que "🌐 ESCANEAR EL MERCADO" se vea COMPLETO.
-    _, center_col, _ = st.columns([1, 12, 1])
+    # ── Action Card central — usa casi todo el ancho del viewport.
+    # En iframe cuadrado de Whop antes se cortaba "ESCANEAR EL MERCAD" — ahora
+    # con un centro de 96% + botones con padding compacto, "ESCANEAR EL MERCADO"
+    # cabe completo siempre.
+    _, center_col, _ = st.columns([1, 50, 1])
 
     with center_col:
         st.markdown('<div class="action-label-new">◇  ANALIZA UNA ACCIÓN O ESCANEA EL MERCADO COMPLETO</div>', unsafe_allow_html=True)
@@ -2702,7 +2702,9 @@ def render_welcome():
             key="hero_ticker_input",
         ).upper().strip()
 
-        btn_col1, btn_col2 = st.columns([1, 1], gap="small")
+        # Asimetría 1:1.3 — el botón derecho (Escanear el Mercado) tiene un
+        # 30% más de ancho porque su texto es más largo. Garantiza que quepa.
+        btn_col1, btn_col2 = st.columns([1, 1.3], gap="small")
         with btn_col1:
             analyze_btn = st.button("🔍  Análisis DLP", use_container_width=True, key="hero_analyze", type="primary")
         with btn_col2:

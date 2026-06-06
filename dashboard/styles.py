@@ -220,21 +220,23 @@ h3 { color: #C8D0D8 !important; font-weight: 500 !important; }
     letter-spacing: 0.03em !important;
 }
 
-/* Botón primario (Analizar) dorado */
+/* Botón primario (Análisis y Escanear) dorado — padding compacto SIEMPRE
+   (no en media query) para que "ESCANEAR EL MERCADO" quepa en iframe
+   cuadrado de Whop sin importar viewport. */
 [data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"]) [data-testid="stButton"] > button[kind="primary"] {
     background: linear-gradient(135deg, #FFB84D 0%, #FFA500 100%) !important;
     border: none !important;
     color: #0A0D11 !important;
     font-weight: 700 !important;
-    font-size: 0.88rem !important;
-    letter-spacing: 0.08em !important;
+    font-size: 0.78rem !important;
+    letter-spacing: 0.04em !important;
     text-transform: uppercase !important;
     border-radius: 10px !important;
-    padding: 14px 36px !important;
+    padding: 12px 14px !important;
     height: auto !important;
     white-space: nowrap !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
     transition: all 0.3s cubic-bezier(0.4,0,0.2,1) !important;
     box-shadow: 0 4px 20px rgba(255,184,77,0.3), inset 0 1px 0 rgba(255,255,255,0.2) !important;
 }
