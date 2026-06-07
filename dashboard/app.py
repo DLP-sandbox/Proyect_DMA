@@ -889,8 +889,10 @@ def _extract_percent(value):
 
 # ── Overview Tab ──────────────────────────────────────────────────────────
 def render_overview(analysis: StockAnalysis):
-    # Fila 1: Gauge + Snowflake + Score breakdown
-    col_gauge, col_snow, col_bar = st.columns([1.2, 1, 1.5])
+    # Fila 1: Gauge + Snowflake (en pantalla ancha — 50/50 cada uno).
+    # Esto da MUCHO más espacio horizontal al snowflake → los labels
+    # ("Crecimiento", "Momentum", "💰 Valor") caben sin cortarse.
+    col_gauge, col_snow = st.columns([1, 1])
 
     with col_gauge:
         fig = build_gauge(analysis.composite_score, analysis.recommendation)
@@ -919,10 +921,10 @@ def render_overview(analysis: StockAnalysis):
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
                         key=f"chart_overview_snowflake_{analysis.ticker}")
 
-    with col_bar:
-        fig = build_score_breakdown(analysis.score_breakdown)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
-                        key=f"chart_overview_breakdown_{analysis.ticker}")
+    # Fila 2: Score breakdown full-width (debajo, con todo el ancho disponible)
+    fig = build_score_breakdown(analysis.score_breakdown)
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+                    key=f"chart_overview_breakdown_{analysis.ticker}")
 
     st.markdown("---")
 
