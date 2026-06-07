@@ -374,7 +374,7 @@ def build_snowflake(snowflake: dict) -> go.Figure:
                 gridcolor=GRID,
             ),
             angularaxis=dict(
-                tickfont=dict(size=11, color=TEXT, family="Inter"),
+                tickfont=dict(size=10, color=TEXT, family="Inter"),
                 gridcolor=GRID,
                 linecolor=GRID,
             ),
@@ -382,7 +382,10 @@ def build_snowflake(snowflake: dict) -> go.Figure:
         paper_bgcolor=BG_MAIN,
         font=dict(color=TEXT),
         height=340,
-        margin=dict(l=40, r=40, t=55, b=45),
+        # Márgenes laterales generosos para que los labels largos
+        # ("Crecimiento 14", "Momentum 12", "💰 Valor 11") quepan sin
+        # cortarse en los extremos del radar.
+        margin=dict(l=70, r=70, t=55, b=50),
         title=dict(
             text="<b>PERFIL DE CALIDAD</b>",
             font=dict(color=MUTED, size=11),
