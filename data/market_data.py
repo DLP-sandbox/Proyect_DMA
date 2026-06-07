@@ -29,6 +29,59 @@ CACHE_DIR.mkdir(exist_ok=True)
 _TICKER_PATTERN = re.compile(r"^[A-Z0-9\-]{1,10}$")
 
 
+# ── Activos NO soportados (acciones individuales únicamente) ──────────────
+# La app DLP analiza acciones individuales (stocks + ADRs del NYSE/NASDAQ).
+# NO analiza ETFs, criptomonedas, futures, forex ni índices, porque la lógica
+# de los agentes (fundamentales, técnico, futuro, etc.) asume una empresa
+# subyacente con earnings, P/E, sector específico, etc. — cosas que no tienen
+# los ETFs o las criptos. Si el usuario intenta uno de estos, mostramos un
+# mensaje específico AHORA — antes de gastar créditos de Anthropic.
+
+_ETF_TICKERS = frozenset([
+    # Índices broad market
+    "VOO", "SPY", "IVV", "VTI", "VXUS", "IWM", "DIA", "MDY", "RSP",
+    # Tech / Nasdaq
+    "QQQ", "QQQM", "XLK", "VGT", "FTEC", "SOXX", "SMH",
+    # Sector SPDRs
+    "XLE", "XLF", "XLI", "XLY", "XLP", "XLV", "XLU", "XLB", "XLRE", "XLC",
+    # Bonds
+    "TLT", "BND", "AGG", "HYG", "LQD", "SHY", "TIP", "IEF", "BIL", "VTEB",
+    # Crypto ETFs (cotizan en NYSE/NASDAQ pero son ETFs, no acciones)
+    "IBIT", "GBTC", "FBTC", "BITO", "ETHA", "ETHE", "BITQ", "BITX",
+    # Commodities
+    "GLD", "SLV", "USO", "UNG", "DBA", "DBC", "PDBC", "IAU", "GLDM",
+    # International / Emerging Markets
+    "VEA", "VWO", "EFA", "EEM", "IEFA", "IEMG", "VEU", "IXUS", "ACWI",
+    # ARK
+    "ARKK", "ARKG", "ARKW", "ARKQ", "ARKF", "ARKX",
+    # Leveraged / Inverse
+    "TQQQ", "SQQQ", "UPRO", "SPXU", "SOXL", "SOXS", "TMF", "TMV",
+    "TNA", "TZA", "FAS", "FAZ", "UDOW", "SDOW",
+    # Dividend / Value
+    "VYM", "SCHD", "DVY", "NOBL", "VIG", "DGRO", "HDV", "SPHD",
+    # Money market / Cash
+    "BIL", "SGOV", "USFR",
+])
+
+_CRYPTO_TICKERS = frozenset([
+    "BTC", "BITCOIN", "BTCUSD",
+    "ETH", "ETHEREUM", "ETHUSD",
+    "USDT", "USDC", "BNB", "XRP", "SOL", "ADA", "DOGE", "AVAX",
+    "DOT", "MATIC", "LINK", "LTC", "BCH", "XLM", "TRX", "UNI",
+    "ATOM", "ALGO", "FIL", "ETC", "NEAR", "APT", "ARB", "OP",
+    "SHIB", "PEPE", "FLOKI", "WIF", "BONK",
+])
+
+_FUTURES_FOREX = frozenset([
+    # Futures comunes (CME, COMEX)
+    "ES", "NQ", "YM", "RTY", "GC", "CL", "SI", "NG", "ZC", "ZS",
+    "ZW", "ZN", "ZB", "ZF", "BTC1", "MES", "MNQ", "MYM", "M2K",
+    # Forex
+    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF",
+    "NZDUSD", "EURJPY", "GBPJPY", "EURCHF", "DXY",
+])
+
+
 def validate_ticker(raw_input: str) -> Tuple[bool, str, str]:
     """Valida un ticker manual ANTES de lanzar el análisis.
 
@@ -62,7 +115,32 @@ def validate_ticker(raw_input: str) -> Tuple[bool, str, str]:
             f"(0-9) y guion (-). Ejemplos válidos: NVDA, AAPL, BRK-B."
         )
 
-    # 3. Verificación de existencia con TradingView (gratis, ~200ms, sin
+    # 3. Bloqueo de activos NO soportados (ETFs, cripto, futures, forex).
+    #    La app analiza acciones individuales — los ETFs/cripto/futures no
+    #    tienen earnings, P/E, sector específico, etc. Se cancela ANTES de
+    #    gastar créditos de Anthropic en un análisis que sería irrelevante.
+    if clean in _ETF_TICKERS:
+        return False, "", (
+            f"📊 **{clean}** es un ETF (fondo cotizado), no una acción individual. "
+            f"DLP Analyzer solo analiza **acciones individuales** del NYSE/NASDAQ "
+            f"(empresas con earnings, fundamentales, sector específico). "
+            f"Prueba con tickers como **NVDA, AAPL, GOOGL, MSFT, AMD, TSLA**."
+        )
+    if clean in _CRYPTO_TICKERS:
+        return False, "", (
+            f"🪙 **{clean}** es una criptomoneda, no una acción del NYSE/NASDAQ. "
+            f"DLP Analyzer solo analiza **acciones individuales** de empresas "
+            f"cotizadas en NYSE/NASDAQ. Prueba con tickers como "
+            f"**NVDA, AAPL, GOOGL, MSFT, AMD, TSLA**."
+        )
+    if clean in _FUTURES_FOREX:
+        return False, "", (
+            f"📈 **{clean}** parece ser un futuro o par de forex, no una acción "
+            f"individual. DLP Analyzer solo analiza **acciones del NYSE/NASDAQ**. "
+            f"Prueba con tickers como **NVDA, AAPL, GOOGL, MSFT, AMD, TSLA**."
+        )
+
+    # 4. Verificación de existencia con TradingView (gratis, ~200ms, sin
     #    rate-limit desde IPs cloud). Buscamos en AMBOS formatos posibles
     #    porque TradingView lista algunos tickers con punto (BRK.B) mientras
     #    yfinance/nuestro código usa guion (BRK-B).
