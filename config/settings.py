@@ -23,8 +23,11 @@ FMP_API_KEY = os.getenv("FMP_API_KEY", "")
 
 # ── Parámetros del sistema ─────────────────────────────────────────────────
 CACHE_TTL_HOURS = 4          # Horas antes de refrescar datos cacheados
-MAX_TOKENS_AGENT = 3000      # Max tokens por sub-agente (subido: explicar términos inline alarga el texto)
-MAX_TOKENS_ORCHESTRATOR = 4500  # subido para evitar truncado del JSON con el estilo DLP
+# Tokens REDUCIDOS para optimizar costo (~40% menos output = lo que cuesta $5/M).
+# 2000 deja headroom suficiente para que el JSON NUNCA se trunque (el análisis
+# narrativo se acorta vía prompt, no por corte de tokens).
+MAX_TOKENS_AGENT = 2000      # antes 3000
+MAX_TOKENS_ORCHESTRATOR = 3000  # antes 4500 — la tesis ya es de 2 párrafos
 
 # Ponderaciones del Composite Score
 # REBALANCEADO 2026: más peso a Fundamentales + Future (calidad LP)

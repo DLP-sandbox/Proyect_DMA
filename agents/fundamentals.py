@@ -26,7 +26,7 @@ Retorna SIEMPRE este JSON exacto (sin markdown adicional fuera del bloque):
 {
   "score": <número 0-100>,
   "conviction": "<HIGH|MEDIUM|LOW>",
-  "analysis": "<análisis narrativo de 3-4 párrafos>",
+  "analysis": "<análisis CONCISO: 1-2 párrafos, máximo 6 líneas en total. Directo al grano, sin relleno ni repeticiones>",
   "pros": ["<pro 1>", "<pro 2>", "<pro 3>"],
   "cons": ["<con 1>", "<con 2>"],
   "key_metrics": {
@@ -45,8 +45,8 @@ Retorna SIEMPRE este JSON exacto (sin markdown adicional fuera del bloque):
     "valuation": <0-25>,
     "financial_health": <0-25>
   },
-  "dcf_thesis": "<descripción del potencial de valor intrínseco>",
-  "earnings_quality": "<análisis de calidad y consistencia de earnings>"
+  "dcf_thesis": "<potencial de valor intrínseco en 1 oración corta>",
+  "earnings_quality": "<calidad y consistencia de earnings en 1 oración corta>"
 }
 ```
 

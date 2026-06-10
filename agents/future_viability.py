@@ -41,7 +41,7 @@ Retorna SIEMPRE este JSON:
 {
   "score": <0-100>,
   "conviction": "<HIGH|MEDIUM|LOW>",
-  "analysis": "<análisis de viabilidad futura en 3-4 párrafos>",
+  "analysis": "<análisis de viabilidad futura CONCISO: 1-2 párrafos, máximo 6 líneas en total. Directo al grano, sin relleno>",
   "pros": ["<ventaja futura 1>", "<ventaja futura 2>", "<ventaja futura 3>"],
   "cons": ["<riesgo futuro 1>", "<riesgo futuro 2>"],
   "key_metrics": {

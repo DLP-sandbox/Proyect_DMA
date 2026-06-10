@@ -48,7 +48,7 @@ Retorna SIEMPRE este JSON:
 {
   "score": <0-100, refleja la gestionabilidad TOTAL del riesgo>,
   "conviction": "<HIGH|MEDIUM|LOW>",
-  "analysis": "<análisis de riesgo y sizing en 2 párrafos>",
+  "analysis": "<análisis de riesgo y sizing CONCISO: 1-2 párrafos, máximo 5 líneas en total. Directo al grano, sin relleno>",
   "pros": ["<ventaja de riesgo 1>", "<ventaja de riesgo 2>"],
   "cons": ["<riesgo 1>", "<riesgo 2>"],
   "key_metrics": {
@@ -68,7 +68,7 @@ Retorna SIEMPRE este JSON:
   },
   "asymmetry_direction": "<upside|downside|balanced>",
   "asymmetry_strength": "<strong|moderate|weak>",
-  "stop_rationale": "<por qué ese nivel es el precio de protección correcto>"
+  "stop_rationale": "<por qué ese nivel es el de protección, en 1 frase breve>"
 }
 ```
 

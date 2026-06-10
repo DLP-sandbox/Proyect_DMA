@@ -29,7 +29,7 @@ Retorna SIEMPRE este JSON:
 {
   "score": <0-100>,
   "conviction": "<HIGH|MEDIUM|LOW>",
-  "analysis": "<análisis de sentimiento en 2-3 párrafos>",
+  "analysis": "<análisis de sentimiento CONCISO: 1-2 párrafos, máximo 5 líneas en total. Directo al grano, sin relleno>",
   "pros": ["<señal positiva de sentimiento 1>", "<señal positiva 2>"],
   "cons": ["<riesgo de sentimiento 1>", "<riesgo 2>"],
   "key_metrics": {

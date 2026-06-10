@@ -2731,10 +2731,10 @@ def render_welcome():
             if not is_valid:
                 st.error(error_msg)
             else:
-                # Cooldown de 10 min entre análisis — vive SOLO en st.session_state
+                # Cooldown de 60 min entre análisis — vive SOLO en st.session_state
                 # (RAM volátil de la sesión actual). Recargar la pestaña lo resetea
                 # por diseño. Es un freno suave para no saturar el servidor.
-                ANALYSIS_COOLDOWN_SEC = 600  # 10 minutos
+                ANALYSIS_COOLDOWN_SEC = 3600  # 60 minutos
                 last_finished = st.session_state.get("_last_analysis_finished_at", 0)
                 elapsed = time.time() - last_finished
                 if elapsed < ANALYSIS_COOLDOWN_SEC:

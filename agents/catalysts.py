@@ -36,7 +36,7 @@ Retorna SIEMPRE este JSON:
 {
   "score": <0-100>,
   "conviction": "<HIGH|MEDIUM|LOW>",
-  "analysis": "<análisis de catalizadores en 2-3 párrafos>",
+  "analysis": "<análisis de catalizadores CONCISO: 1-2 párrafos, máximo 5 líneas en total. Directo al grano, sin relleno>",
   "pros": ["<catalizador positivo 1>", "<catalizador positivo 2>"],
   "cons": ["<riesgo de evento 1>", "<riesgo de evento 2>"],
   "key_metrics": {
@@ -52,7 +52,7 @@ Retorna SIEMPRE este JSON:
     "catalyst_quality": <0-33>,
     "analyst_revision_trend": <0-33>
   },
-  "top_catalyst": "<el catalizador #1 que podría mover el precio de forma asimétrica>"
+  "top_catalyst": "<el catalizador #1 que podría mover el precio, en 1 oración corta>"
 }
 ```"""
 

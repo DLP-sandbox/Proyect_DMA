@@ -25,7 +25,7 @@ Retorna SIEMPRE este JSON:
 {
   "score": <0-100>,
   "conviction": "<HIGH|MEDIUM|LOW>",
-  "analysis": "<análisis macro en 2-3 párrafos>",
+  "analysis": "<análisis macro CONCISO: 1-2 párrafos, máximo 5 líneas en total. Directo al grano, sin relleno>",
   "pros": ["<viento de cola macro 1>", "<viento de cola macro 2>"],
   "cons": ["<viento en contra macro 1>", "<viento en contra macro 2>"],
   "key_metrics": {

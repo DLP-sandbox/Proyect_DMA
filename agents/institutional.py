@@ -23,7 +23,7 @@ Retorna SIEMPRE este JSON:
 {
   "score": <0-100>,
   "conviction": "<HIGH|MEDIUM|LOW>",
-  "analysis": "<análisis de flujo institucional en 2-3 párrafos>",
+  "analysis": "<análisis de flujo institucional CONCISO: 1-2 párrafos, máximo 5 líneas en total. Directo al grano, sin relleno>",
   "pros": ["<señal positiva 1>", "<señal positiva 2>"],
   "cons": ["<señal negativa 1>", "<señal negativa 2>"],
   "key_metrics": {
