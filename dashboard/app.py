@@ -351,6 +351,23 @@ def run_analysis(ticker: str):
             del st.session_state.analyses[ticker]
             _debug_log(f"  deleted bad cache")
 
+    # ── Caché COMPARTIDO (Upstash) — si OTRO usuario ya analizó este ticker en
+    # los últimos 30 días, reutilizamos su análisis sin gastar créditos. Las
+    # gráficas, precio, P/E e indicadores se refrescan en vivo al renderizar.
+    # Es no-op si no hay credenciales de Upstash (vuelve al comportamiento de hoy).
+    try:
+        from data.cache_store import get_cached_analysis
+        shared = get_cached_analysis(ticker)
+    except Exception:
+        shared = None
+    if shared is not None:
+        _debug_log(f"  shared cache HIT for {ticker}")
+        st.session_state.analyses[ticker] = shared
+        st.session_state.selected_ticker = ticker
+        st.session_state.quick_view_ticker = None
+        st.rerun()
+        return
+
     st.session_state.analyzing = True
     st.session_state.selected_ticker = ticker
 
@@ -460,8 +477,16 @@ def run_analysis(ticker: str):
     thesis_ok = len(getattr(analysis, "investment_thesis", "") or "") > 200
     if thesis_ok:
         def _save_bg():
+            # Guardar a disco local (siempre)
             try:
                 disk_save(analysis)
+            except Exception:
+                pass
+            # Guardar al caché compartido Upstash (no-op si no hay credenciales).
+            # Así el próximo usuario que pida este ticker en 30 días lo reutiliza.
+            try:
+                from data.cache_store import save_cached_analysis
+                save_cached_analysis(ticker, analysis)
             except Exception:
                 pass
         _threading.Thread(target=_save_bg, daemon=True).start()
