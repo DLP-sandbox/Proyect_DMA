@@ -2872,13 +2872,14 @@ def score_css_class(score: float) -> str:
 
 
 AGENT_ICONS = {
-    "Fundamentales":     "📊",
-    "Técnico":           "📈",
-    "Viabilidad Futura": "🔭",
-    "Smart Money":       "🏦",
-    "Catalizadores":     "⚡",
-    "Macro & Sector":    "🌍",
-    "Sentimiento":       "📰",
-    "Riesgo & Sizing":   "⚖️",
-    "Orquestador":       "👔",
+    "Fundamentales":      "📊",
+    "Técnico":            "📈",
+    "Viabilidad Futura":  "🔭",
+    "Smart Money":        "🏦",
+    "Catalizadores":      "⚡",
+    "Macro & Sector":     "🌍",
+    "Sentimiento":        "📰",
+    "Contexto de Mercado": "🌐",
+    "Riesgo & Sizing":    "⚖️",
+    "Orquestador":        "👔",
 }

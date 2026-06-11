@@ -17,9 +17,7 @@ from agents.fundamentals import FundamentalsAgent
 from agents.technical import TechnicalAgent
 from agents.future_viability import FutureViabilityAgent
 from agents.institutional import InstitutionalAgent
-from agents.catalysts import CatalystsAgent
-from agents.macro import MacroAgent
-from agents.sentiment import SentimentAgent
+from agents.market_context import MarketContextAgent
 from agents.risk import RiskAgent
 
 
@@ -152,15 +150,18 @@ class Orchestrator:
 
     def __init__(self, anthropic_client: anthropic.Anthropic):
         self.client = anthropic_client
+        # Nota: "market_context" es un agente COMBINADO que hace 1 sola llamada
+        # de IA y devuelve un dict con 3 reportes (macro, sentiment, catalysts).
+        # El _run_agents_parallel lo detecta y fusiona esos 3 en el dict de
+        # reports. Esto reduce de 8 a 6 llamadas de IA por análisis, manteniendo
+        # los mismos 3 reportes (scoring, breakdown y gráficas intactos).
         self.agents = {
-            "fundamentals":  FundamentalsAgent(anthropic_client),
-            "technical":     TechnicalAgent(anthropic_client),
-            "future":        FutureViabilityAgent(anthropic_client),
-            "institutional": InstitutionalAgent(anthropic_client),
-            "catalysts":     CatalystsAgent(anthropic_client),
-            "macro":         MacroAgent(anthropic_client),
-            "sentiment":     SentimentAgent(anthropic_client),
-            "risk":          RiskAgent(anthropic_client),
+            "fundamentals":   FundamentalsAgent(anthropic_client),
+            "technical":      TechnicalAgent(anthropic_client),
+            "future":         FutureViabilityAgent(anthropic_client),
+            "institutional":  InstitutionalAgent(anthropic_client),
+            "market_context": MarketContextAgent(anthropic_client),
+            "risk":           RiskAgent(anthropic_client),
         }
 
     def analyze(self, ticker: str, progress_callback=None) -> StockAnalysis:
@@ -189,7 +190,12 @@ class Orchestrator:
             try:
                 report = agent.analyze(ticker)
                 if callback:
-                    callback(agent.name, f"Completado — Score: {report.score:.0f}/100")
+                    # El agente combinado devuelve un DICT de 3 reportes (no
+                    # tiene .score). Mostramos un mensaje genérico en ese caso.
+                    if isinstance(report, dict):
+                        callback(agent.name, "Completado")
+                    else:
+                        callback(agent.name, f"Completado — Score: {report.score:.0f}/100")
                 return name, report
             except Exception as e:
                 if callback:
@@ -208,7 +214,13 @@ class Orchestrator:
             }
             for future in as_completed(futures):
                 name, report = future.result()
-                reports[name] = report
+                # El agente combinado "market_context" devuelve un DICT con
+                # {"macro":, "sentiment":, "catalysts":} → lo fusionamos para que
+                # downstream vea los 3 reportes separados como siempre.
+                if isinstance(report, dict):
+                    reports.update(report)
+                else:
+                    reports[name] = report
 
         return reports
 
