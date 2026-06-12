@@ -2177,9 +2177,23 @@ def render_scan_results():
         </div>"""
         st.markdown(row_html, unsafe_allow_html=True)
 
-        # Botón de análisis (fuera del HTML para funcionar con Streamlit)
-        if st.button(f"Analizar {result.ticker}", key=f"scan_analyze_{result.ticker}"):
-            run_analysis(result.ticker)
+        # Botón "Ver más" → abre el Quick View (preview rápido SIN IA, GRATIS):
+        # gráfica, métricas clave, noticias y performance. Reemplaza al análisis
+        # completo directo desde el scan para no gastar créditos en cada acción.
+        # Si el ticker ya tiene un análisis completo en sesión, lo muestra directo.
+        if st.button(f"🔍 Ver más — {result.ticker}",
+                     key=f"scan_quickview_{result.ticker}",
+                     use_container_width=True):
+            if result.ticker in st.session_state.analyses:
+                st.session_state.selected_ticker = result.ticker
+                st.session_state.quick_view_ticker = None
+            else:
+                st.session_state.quick_view_ticker = result.ticker
+                st.session_state.selected_ticker = None
+                # Marca que viene del scan → el Quick View ocultará el botón
+                # de lanzar análisis completo.
+                st.session_state.quick_view_from_scan = True
+            st.rerun()
 
 
 # ── Scanner Config Page ──────────────────────────────────────────────────
@@ -2697,17 +2711,20 @@ def render_quick_view(ticker: str):
             """, unsafe_allow_html=True)
 
     # ── CTA: Lanzar análisis profundo ────────────────────────────────
-    st.markdown('<div style="margin-top:24px;"></div>', unsafe_allow_html=True)
-    _, cta_col, _ = st.columns([1, 2, 1])
-    with cta_col:
-        if st.button(
-            f"🔍  EJECUTAR ANÁLISIS DLP DE {ticker}",
-            use_container_width=True,
-            key="qv_full_analysis",
-            type="primary",
-        ):
-            st.session_state.quick_view_ticker = None
-            run_analysis(ticker)
+    # Solo se muestra si el Quick View NO viene del scan. Desde el scan no se
+    # muestra nada (para analizar, el usuario vuelve al inicio y lo escribe).
+    if not st.session_state.get("quick_view_from_scan"):
+        st.markdown('<div style="margin-top:24px;"></div>', unsafe_allow_html=True)
+        _, cta_col, _ = st.columns([1, 2, 1])
+        with cta_col:
+            if st.button(
+                f"🔍  EJECUTAR ANÁLISIS DLP DE {ticker}",
+                use_container_width=True,
+                key="qv_full_analysis",
+                type="primary",
+            ):
+                st.session_state.quick_view_ticker = None
+                run_analysis(ticker)
 
 
 # ── Welcome / Central Hub ─────────────────────────────────────────────────
@@ -2834,6 +2851,9 @@ def render_welcome():
                     else:
                         st.session_state.quick_view_ticker = ticker
                         st.session_state.selected_ticker = None
+                        # Desde el home SÍ se permite lanzar análisis desde el
+                        # Quick View → marcamos que NO viene del scan.
+                        st.session_state.quick_view_from_scan = False
                     st.rerun()
 
     # ── Live Market Pulse ─────────────────────────────────────────────

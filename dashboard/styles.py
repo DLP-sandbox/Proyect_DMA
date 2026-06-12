@@ -2835,6 +2835,20 @@ button[kind="header"][aria-label*="iew"] {
     .pulse-change { font-size: 0.58rem !important; }
 }
 
+/* ── Botones "Ver más" del scan — brillo sutil dorado (estático, sin animación)
+   para diferenciarlos. No es llamativo, solo un borde y glow leve. */
+[class*="st-key-scan_quickview"] button {
+    border: 1px solid rgba(255, 184, 77, 0.55) !important;
+    color: #FFB84D !important;
+    box-shadow: 0 0 8px rgba(255, 184, 77, 0.18) !important;
+    font-weight: 600 !important;
+    transition: box-shadow 0.2s ease, border-color 0.2s ease !important;
+}
+[class*="st-key-scan_quickview"] button:hover {
+    border-color: rgba(255, 184, 77, 0.85) !important;
+    box-shadow: 0 0 14px rgba(255, 184, 77, 0.30) !important;
+}
+
 </style>
 """
 
