@@ -1042,16 +1042,9 @@ def render_overview(analysis: StockAnalysis):
                 </div>
                 """, unsafe_allow_html=True)
 
-        # ── Vetos aplicados (alert box) ──────────────────────────
-        if analysis.vetos_applied:
-            st.markdown("""
-            <div class="veto-section-header">
-                <span class="veto-icon">⚠️</span>
-                <span class="veto-title">Vetos Aplicados</span>
-            </div>
-            """, unsafe_allow_html=True)
-            for veto in analysis.vetos_applied:
-                st.markdown(f'<div class="veto-item">{veto}</div>', unsafe_allow_html=True)
+        # ── Vetos aplicados: ya NO se muestran en el Overview (el dato
+        # analysis.vetos_applied sigue existiendo internamente para el scoring,
+        # solo se quitó su visualización). ─────────────────────────
 
     with col_thesis:
         st.markdown("#### 👔 Tesis de Inversión — Orquestador")
