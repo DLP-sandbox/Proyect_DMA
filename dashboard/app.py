@@ -466,6 +466,15 @@ def run_analysis(ticker: str):
         pass
 
     analysis = analysis_result[0]
+    # Limpieza determinista de jerga inglesa residual (costo $0 — sin IA/red).
+    # Se aplica ANTES de guardar para que el caché (Upstash/disco) almacene ya
+    # la versión en español limpio. Solo toca campos narrativos; nunca enums ni
+    # datos del dashboard. Fallback total: si algo falla, muestra el texto tal cual.
+    try:
+        from data.language_filter import clean_analysis_language
+        clean_analysis_language(analysis)
+    except Exception:
+        pass
     st.session_state.analyses[ticker] = analysis
     st.session_state.selected_ticker = ticker
     st.session_state.quick_view_ticker = None
@@ -2985,6 +2994,16 @@ def main():
         return
 
     analysis = st.session_state.analyses[selected]
+
+    # Limpieza de jerga inglesa al MOSTRAR — cubre también los análisis cacheados
+    # (sesión, disco y Upstash) generados antes de este filtro, para que ninguno
+    # muestre términos en inglés. Es idempotente (re-aplicarlo no cambia nada) y
+    # de costo $0. Fallback total ante cualquier error.
+    try:
+        from data.language_filter import clean_analysis_language
+        clean_analysis_language(analysis)
+    except Exception:
+        pass
 
     # Botón "← Volver al Scan" — visible cuando hay resultados de scan activos
     if st.session_state.scan_results:
