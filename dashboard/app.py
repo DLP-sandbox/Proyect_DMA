@@ -992,7 +992,16 @@ def render_overview(analysis: StockAnalysis):
         if any([analysis.entry_price, analysis.target_price, analysis.risk_reward, analysis.position_size_pct]):
             st.markdown('<div class="kpi-section-title">📊 Métricas Clave</div>', unsafe_allow_html=True)
 
-            entry_str  = f"${analysis.entry_price:.2f}"  if analysis.entry_price else "—"
+            # El "Precio Actual" debe reflejar SIEMPRE el precio en vivo del
+            # momento en que se abre el análisis — aunque el análisis venga de
+            # caché (Upstash/disco/sesión). get_company_info() sobreescribe
+            # current_price con el precio en vivo (TTL 60s); si no está
+            # disponible, cae al entry_price persistido (mismo patrón que ya usan
+            # la gráfica R/R del Overview y la pestaña de Riesgo).
+            from data.market_data import get_company_info
+            _live_info = get_company_info(analysis.ticker) or {}
+            _current_price = _live_info.get("current_price") or analysis.entry_price
+            entry_str  = f"${_current_price:.2f}"  if _current_price else "—"
             target_str = f"${analysis.target_price:.2f}" if analysis.target_price else "—"
             rr_str     = _extract_rr_ratio(analysis.risk_reward)
             rr_num     = _safe_num(str(analysis.risk_reward or "").split(":")[0]) if analysis.risk_reward else None
@@ -1002,7 +1011,7 @@ def render_overview(analysis: StockAnalysis):
             metrics = [
                 {
                     "icon": "📍", "label": "Precio Actual", "value": entry_str, "color": "#FFB84D",
-                    "tooltip": "Precio actual del activo al momento del análisis. Se usa como línea de referencia para calcular el upside hasta el precio objetivo y el downside hasta el nivel de protección.",
+                    "tooltip": "Precio actual del activo en vivo (se refresca al abrir el análisis). Se usa como línea de referencia para calcular el upside hasta el precio objetivo y el downside hasta el nivel de protección.",
                 },
                 {
                     "icon": "🏁", "label": "Precio Objetivo", "value": target_str, "color": "#00FF88",
