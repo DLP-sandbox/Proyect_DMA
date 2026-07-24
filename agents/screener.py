@@ -164,7 +164,7 @@ class ScreenerAgent:
         f = self._normalize_filters(filters)
 
         if callback:
-            callback("Consultando TradingView…", 5, 100)
+            callback("Recopilando datos…", 5, 100)
 
         df, error = self._fetch_universe()
         self._last_error = error

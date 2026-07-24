@@ -7,28 +7,32 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-# ── Paleta Bloomberg ──────────────────────────────────────────────────────
-BG_MAIN  = "#0B0E11"
-BG_CARD  = "#0F1419"
-GRID     = "#1A2030"
-TEXT     = "#E0E0E0"
-MUTED    = "#7A8898"
-GREEN    = "#00FF88"
-RED      = "#FF3B5C"
-ORANGE   = "#FFA500"
-BLUE     = "#4A9EFF"
-PURPLE   = "#9B59FF"
-YELLOW   = "#FFD740"
-WHITE    = "#FFFFFF"
+# ── Paleta (espejo de los tokens de diseño de styles.py) ──────────────────
+BG_MAIN  = "#0A0B0D"                     # --bg
+BG_CARD  = "#101216"                     # --surface-1
+GRID     = "rgba(255,255,255,0.05)"      # rejilla casi invisible (Tufte)
+TEXT     = "#C9CDD3"                     # --text
+MUTED    = "#8D949E"                     # --text-2
+GREEN    = "#3DD68C"                     # --pos
+RED      = "#F1495F"                     # --neg
+ORANGE   = "#E2B25C"                     # --accent (oro antiguo)
+BLUE     = "#6FA3E0"                     # --info
+PURPLE   = "#9D8CE0"                     # dato categórico
+YELLOW   = "#F0C878"                     # --accent-hi
+WHITE    = "#F2F3F5"                     # --text-hi
 
 PLOTLY_LAYOUT = dict(
     paper_bgcolor=BG_MAIN,
-    plot_bgcolor=BG_CARD,
+    plot_bgcolor=BG_MAIN,
     font=dict(color=TEXT, family="JetBrains Mono, monospace", size=11),
-    xaxis=dict(gridcolor=GRID, zerolinecolor=GRID, showgrid=True),
-    yaxis=dict(gridcolor=GRID, zerolinecolor=GRID, showgrid=True),
+    xaxis=dict(gridcolor=GRID, zerolinecolor=GRID, showgrid=True,
+               linecolor="rgba(255,255,255,0.08)", tickfont=dict(color=MUTED, size=10)),
+    yaxis=dict(gridcolor=GRID, zerolinecolor=GRID, showgrid=True,
+               linecolor="rgba(0,0,0,0)", tickfont=dict(color=MUTED, size=10)),
     margin=dict(l=10, r=10, t=40, b=10),
     hovermode="x unified",
+    hoverlabel=dict(bgcolor="#15181D", bordercolor="rgba(255,255,255,0.10)",
+                    font=dict(family="JetBrains Mono, monospace", size=11, color=TEXT)),
 )
 
 
@@ -230,6 +234,116 @@ def build_price_chart(df_daily: pd.DataFrame, indicators: dict, ticker: str) -> 
     return fig
 
 
+def _hex_rgb(hex_color: str) -> str:
+    """'#3DD68C' → '61,214,140' (para componer rgba() en Plotly)."""
+    h = hex_color.lstrip("#")
+    return ",".join(str(int(h[i:i + 2], 16)) for i in (0, 2, 4))
+
+
+def build_mountain_chart(df_daily: pd.DataFrame, ticker: str, height: int = 560) -> go.Figure:
+    """
+    Versión simplificada: una sola línea de precio de cierre con un degradado
+    suave debajo (gráfica tipo 'mountain'). Sin medias, sin RSI, sin MACD.
+
+    El degradado se construye apilando varias bandas rellenas con `tonexty` y
+    opacidad creciente hacia la línea. Se hace así a propósito, en lugar de
+    usar `fillgradient`, porque las bandas apiladas funcionan en cualquier
+    versión de Plotly.js.
+    """
+    if df_daily is None or df_daily.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="Sin datos de precio disponibles", x=0.5, y=0.5,
+                           showarrow=False, font=dict(color=MUTED))
+        fig.update_layout(**PLOTLY_LAYOUT, height=height)
+        return fig
+
+    df = df_daily.copy()
+    dates = df.index if isinstance(df.index, pd.DatetimeIndex) else pd.to_datetime(df.index)
+    close = df["Close"].astype(float)
+
+    # Color según el rendimiento del periodo completo
+    up = float(close.iloc[-1]) >= float(close.iloc[0])
+    line_hex = GREEN if up else RED
+    rgb = _hex_rgb(line_hex)
+
+    lo, hi = float(close.min()), float(close.max())
+    span = (hi - lo) or (hi * 0.02 or 1.0)
+    y_lo = lo - span * 0.18          # suelo del degradado (bajo el eje visible)
+    y_hi = hi + span * 0.10
+
+    fig = go.Figure()
+
+    # ── Degradado ──────────────────────────────────────────────────────────
+    # Se corta el área bajo la línea en estratos HORIZONTALES (niveles de
+    # precio fijos), no en bandas que sigan la curva: si siguen la curva se ven
+    # los escalones como las curvas de nivel de un mapa. Cada traza recorta el
+    # cierre a su nivel y rellena `tonexty` contra la anterior, de modo que
+    # cada estrato pinta una franja limpia. La opacidad sube con la altura →
+    # brillo intenso pegado a la línea que se desvanece hacia abajo.
+    n_bands = 26
+    levels = np.linspace(y_lo, hi, n_bands + 1)
+
+    fig.add_trace(go.Scatter(
+        x=dates, y=np.full(len(close), y_lo), mode="lines",
+        line=dict(width=0, color=f"rgba({rgb},0)"),
+        hoverinfo="skip", showlegend=False,
+    ))
+    for k in range(1, n_bands + 1):
+        frac = k / n_bands
+        alpha = 0.30 * (frac ** 2.0)     # invisible abajo, vivo junto a la línea
+        fig.add_trace(go.Scatter(
+            x=dates, y=close.clip(lower=y_lo, upper=levels[k]), mode="lines",
+            line=dict(width=0, color=f"rgba({rgb},0)"),
+            fill="tonexty", fillcolor=f"rgba({rgb},{alpha:.4f})",
+            hoverinfo="skip", showlegend=False,
+        ))
+
+    # ── Halo difuso justo bajo la línea, para el efecto de brillo ──────────
+    fig.add_trace(go.Scatter(
+        x=dates, y=close, mode="lines",
+        line=dict(color=f"rgba({rgb},0.18)", width=6, shape="spline", smoothing=0.4),
+        hoverinfo="skip", showlegend=False,
+    ))
+
+    # ── Línea de precio (la única traza con hover) ─────────────────────────
+    fig.add_trace(go.Scatter(
+        x=dates, y=close, mode="lines", name=ticker,
+        line=dict(color=line_hex, width=2, shape="spline", smoothing=0.4),
+        hovertemplate="%{x|%d %b %Y}<br><b>$%{y:,.2f}</b><extra></extra>",
+        showlegend=False,
+    ))
+
+    # Etiqueta de esquina, igual que en la gráfica de velas
+    fig.add_annotation(
+        text=f"<b>{ticker} — Precio</b>",
+        xref="x domain", yref="y domain",
+        x=0.01, y=0.97, xanchor="left", yanchor="top",
+        showarrow=False,
+        font=dict(size=12, color=TEXT, family="JetBrains Mono, monospace"),
+        bgcolor="rgba(10,11,13,0.7)",
+        bordercolor="rgba(226,178,92,0.20)",
+        borderwidth=1, borderpad=4,
+    )
+
+    fig.update_layout(
+        paper_bgcolor=BG_MAIN,
+        plot_bgcolor=BG_MAIN,
+        font=dict(color=TEXT, family="JetBrains Mono, monospace", size=11),
+        height=height,
+        hovermode="x unified",
+        showlegend=False,
+        margin=dict(l=10, r=10, t=30, b=10),
+        hoverlabel=dict(bgcolor="rgba(16,18,22,0.95)", bordercolor=f"rgba({rgb},0.35)",
+                        font=dict(color=TEXT, family="JetBrains Mono, monospace", size=11)),
+    )
+    fig.update_xaxes(gridcolor=GRID, zerolinecolor=GRID,
+                     tickfont=dict(color=MUTED, size=9), showspikes=False)
+    fig.update_yaxes(gridcolor=GRID, zerolinecolor=GRID,
+                     tickfont=dict(color=MUTED, size=9),
+                     tickprefix="$", range=[y_lo, y_hi])
+    return fig
+
+
 # ── Tachómetro / Gauge ────────────────────────────────────────────────────
 
 def build_gauge(score: float, recommendation: str) -> go.Figure:
@@ -238,12 +352,12 @@ def build_gauge(score: float, recommendation: str) -> go.Figure:
     en figuras pequeñas)."""
 
     rec_colors = {
-        "STRONG BUY": "#00FF88",
-        "BUY":        "#4A9EFF",
-        "WATCH":      "#FFA500",
-        "PASS":       "#FF3B5C",
+        "STRONG BUY": "#3DD68C",
+        "BUY":        "#6FA3E0",
+        "WATCH":      "#E2B25C",
+        "PASS":       "#F1495F",
     }
-    color = rec_colors.get(recommendation, "#FFA500")
+    color = rec_colors.get(recommendation, "#E2B25C")
 
     # Gauge SIN número — el arco vive en la parte superior de la figura
     # (domain y=[0.32, 1.0]) dejando espacio limpio abajo para el número.
@@ -268,8 +382,8 @@ def build_gauge(score: float, recommendation: str) -> go.Figure:
             "borderwidth": 1,
             "bordercolor": GRID,
             "steps": [
-                {"range": [0, 50],  "color": "#1A0A0A"},
-                {"range": [50, 65], "color": "#1A1200"},
+                {"range": [0, 50],  "color": "#160B0D"},
+                {"range": [50, 65], "color": "#15120A"},
                 {"range": [65, 80], "color": "#0A1A10"},
                 {"range": [80, 100],"color": "#0A1A0A"},
             ],
@@ -424,28 +538,28 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
     scores = [float(score_breakdown.get(k, 50)) for k in order]
 
     def color_for(s):
-        if s >= 80: return "#00FF88"
-        if s >= 65: return "#4AFF88"
-        if s >= 50: return "#FFB84D"
-        if s >= 35: return "#FF8B3D"
-        return "#FF3B5C"
+        if s >= 80: return "#3DD68C"
+        if s >= 65: return "#63DFA3"
+        if s >= 50: return "#E2B25C"
+        if s >= 35: return "#E0854E"
+        return "#F1495F"
 
     bar_colors = [color_for(s) for s in scores]
 
     fig = go.Figure()
 
     # Zonas de calidad (background)
-    fig.add_vrect(x0=0,  x1=50,  fillcolor="rgba(255,59,92,0.04)", line_width=0)
-    fig.add_vrect(x0=50, x1=65,  fillcolor="rgba(255,184,77,0.04)", line_width=0)
-    fig.add_vrect(x0=65, x1=80,  fillcolor="rgba(74,158,255,0.04)", line_width=0)
-    fig.add_vrect(x0=80, x1=100, fillcolor="rgba(0,255,136,0.05)", line_width=0)
+    fig.add_vrect(x0=0,  x1=50,  fillcolor="rgba(241,73,95,0.04)", line_width=0)
+    fig.add_vrect(x0=50, x1=65,  fillcolor="rgba(226,178,92,0.04)", line_width=0)
+    fig.add_vrect(x0=65, x1=80,  fillcolor="rgba(111,163,224,0.04)", line_width=0)
+    fig.add_vrect(x0=80, x1=100, fillcolor="rgba(61,214,140,0.05)", line_width=0)
 
     # Barras background (track gris) — para dar profundidad
     fig.add_trace(go.Bar(
         y=names,
         x=[100] * len(names),
         orientation="h",
-        marker=dict(color="rgba(30,37,48,0.4)", line=dict(width=0)),
+        marker=dict(color="rgba(21,24,29,0.4)", line=dict(width=0)),
         showlegend=False,
         hoverinfo="skip",
         width=0.55,
@@ -470,14 +584,14 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
     ))
 
     # Threshold lines (dotted, sin labels intrusivos)
-    fig.add_vline(x=65, line_dash="dot", line_color="#FFB84D",
+    fig.add_vline(x=65, line_dash="dot", line_color="#E2B25C",
                   line_width=1, opacity=0.4)
     fig.add_vline(x=80, line_dash="dot", line_color=GREEN,
                   line_width=1, opacity=0.35)
 
     fig.update_layout(
         paper_bgcolor=BG_MAIN,
-        plot_bgcolor=BG_CARD,
+        plot_bgcolor=BG_MAIN,
         font=dict(color=TEXT, family="Inter", size=11),
         height=380,
         barmode="overlay",
@@ -488,7 +602,7 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
             tickfont=dict(color=MUTED, size=9),
             zeroline=False,
             tickvals=[0, 25, 50, 65, 80, 100],
-            ticktext=["0", "25", "50", "<span style='color:#FFB84D'>65</span>", "<span style='color:#00FF88'>80</span>", "100"],
+            ticktext=["0", "25", "50", "<span style='color:#E2B25C'>65</span>", "<span style='color:#3DD68C'>80</span>", "100"],
         ),
         yaxis=dict(
             gridcolor="rgba(0,0,0,0)",
@@ -504,7 +618,7 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
         showlegend=False,
         margin=dict(l=10, r=50, t=40, b=20),
         hovermode="y unified",
-        hoverlabel=dict(bgcolor="#1A1F28", bordercolor="rgba(255,184,77,0.3)",
+        hoverlabel=dict(bgcolor="#15181D", bordercolor="rgba(226,178,92,0.3)",
                         font=dict(size=11, family="JetBrains Mono", color=TEXT)),
     )
 
@@ -534,7 +648,7 @@ def build_mini_gauge(score: float) -> go.Figure:
             "bar":  {"color": color, "thickness": 0.4},
             "bgcolor": BG_CARD,
             "borderwidth": 0,
-            "steps": [{"range": [0, 100], "color": "#141920"}],
+            "steps": [{"range": [0, 100], "color": "#101216"}],
         },
     ))
 

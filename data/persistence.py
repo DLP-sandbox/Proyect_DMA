@@ -65,14 +65,44 @@ def _log_persistence_error(context: str, exc: Exception) -> None:
 
 # ── ANALYSES ──────────────────────────────────────────────────────────────
 
+# Cuántos análisis/escaneos se conservan en disco. El historial crecía sin
+# límite y cada arranque cargaba TODO a memoria. La barra lateral muestra
+# exactamente estos: los 10 análisis y 3 escaneos más recientes.
+MAX_ANALYSES_ON_DISK = 10
+MAX_SCANS_ON_DISK = 3
+
+
 def save_analysis(analysis) -> None:
-    """Guarda un StockAnalysis en disco bajo .history/analyses/{TICKER}.json"""
+    """Guarda un StockAnalysis en disco bajo .history/analyses/{TICKER}.json.
+    Tras guardar, poda los más antiguos para conservar solo los N más recientes."""
     try:
         _ensure_dirs()
         path = ANALYSES_DIR / f"{analysis.ticker}.json"
         path.write_text(_safe_json_dumps(analysis.to_dict()))
     except Exception as e:
         _log_persistence_error(f"save_analysis:{getattr(analysis, 'ticker', '?')}", e)
+    # Poda best-effort — nunca bloquea ni lanza.
+    prune_old_analyses()
+
+
+def prune_old_analyses(keep: int = MAX_ANALYSES_ON_DISK) -> int:
+    """Conserva solo los `keep` análisis más recientes (por fecha de
+    modificación del archivo) y borra el resto del disco. Devuelve cuántos
+    borró. LIGERO (no abre los JSON) y NUNCA lanza excepción."""
+    borrados = 0
+    try:
+        _ensure_dirs()
+        files = sorted(ANALYSES_DIR.glob("*.json"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+        for p in files[keep:]:
+            try:
+                p.unlink()
+                borrados += 1
+            except Exception:
+                pass
+    except Exception as e:
+        _log_persistence_error("prune_old_analyses", e)
+    return borrados
 
 
 def delete_analysis(ticker: str) -> None:
@@ -199,10 +229,31 @@ def save_scan(scan_results) -> Optional[str]:
             "results":   results_data,
         }
         (SCANS_DIR / f"scan_{scan_id}.json").write_text(_safe_json_dumps(data))
+        # Poda best-effort — conserva solo los N escaneos más recientes.
+        prune_old_scans()
         return scan_id
     except Exception as e:
         _log_persistence_error("save_scan", e)
         return None
+
+
+def prune_old_scans(keep: int = MAX_SCANS_ON_DISK) -> int:
+    """Conserva solo los `keep` escaneos más recientes y borra el resto del
+    disco. Devuelve cuántos borró. LIGERO y NUNCA lanza excepción."""
+    borrados = 0
+    try:
+        _ensure_dirs()
+        files = sorted(SCANS_DIR.glob("scan_*.json"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+        for p in files[keep:]:
+            try:
+                p.unlink()
+                borrados += 1
+            except Exception:
+                pass
+    except Exception as e:
+        _log_persistence_error("prune_old_scans", e)
+    return borrados
 
 
 def load_all_scans_meta() -> list[dict]:

@@ -834,6 +834,92 @@ def get_relative_strength(ticker: str, benchmark: str = "SPY", period: str = "1y
 
 # ── Holders e institucionales ──────────────────────────────────────────────
 
+def _nasdaq_num(s):
+    """Convierte '1,234.5', '$1,234', '8.94%' → float. None si no se puede."""
+    if s is None:
+        return None
+    try:
+        cleaned = re.sub(r"[,$%\s]", "", str(s))
+        if cleaned in ("", "-", "N/A"):
+            return None
+        v = float(cleaned)
+        return v if v == v else None  # NaN check
+    except (TypeError, ValueError):
+        return None
+
+
+def _nasdaq_json(path: str) -> Optional[dict]:
+    """GET a la API pública de Nasdaq (api.nasdaq.com). Nasdaq cubre TODAS las
+    acciones de NASDAQ y NYSE y no rate-limita las IPs de datacenter como sí
+    hace Yahoo. Devuelve el dict 'data' de la respuesta, o None. NUNCA lanza."""
+    url = f"https://api.nasdaq.com{path}"
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+        "Origin": "https://www.nasdaq.com",
+        "Referer": "https://www.nasdaq.com/",
+    }
+    try:
+        resp = requests.get(url, headers=headers, timeout=15)
+        if resp.status_code != 200:
+            return None
+        payload = resp.json()
+        return payload.get("data") if isinstance(payload, dict) else None
+    except Exception:
+        return None
+
+
+def _get_insiders_from_nasdaq(ticker: str) -> dict:
+    """Fallback de transacciones de insiders via Nasdaq cuando yfinance falla
+    (rate-limit en cloud). Devuelve {insider_transactions, recent_insider_buys,
+    recent_insider_sells} en el MISMO formato que get_holders_data. NUNCA lanza."""
+    result: dict = {}
+    try:
+        data = _nasdaq_json(
+            f"/api/company/{ticker.upper()}/insider-trades"
+            "?limit=20&type=ALL&sortColumn=lastDate&sortOrder=DESC"
+        )
+        if not data:
+            return result
+        rows = (((data.get("transactionTable") or {}).get("table") or {})
+                .get("rows") or [])
+        txns, buys, sells = [], 0, 0
+        for row in rows[:20]:
+            ttype = str(row.get("transactionType", "")).lower()
+            if "buy" in ttype or "purchase" in ttype:
+                tipo, is_buy = "compra", True
+            elif "sell" in ttype or "sale" in ttype:
+                tipo, is_buy = "venta", False
+            elif "option" in ttype or "grant" in ttype or "award" in ttype:
+                tipo, is_buy = "concesión", None
+            else:
+                tipo, is_buy = "otra", None
+            if is_buy is True:
+                buys += 1
+            elif is_buy is False:
+                sells += 1
+            shares = _nasdaq_num(row.get("sharesTraded")) or 0.0
+            price = _nasdaq_num(row.get("lastPrice")) or 0.0
+            txns.append({
+                "date": str(row.get("lastDate", ""))[:10],
+                "insider": str(row.get("insider", "")).title(),
+                "position": str(row.get("relation", "")),
+                "shares": shares,
+                "value": shares * price,
+                "type": tipo,
+                "text": str(row.get("transactionType", "")),
+            })
+        if txns:
+            result["insider_transactions"] = txns
+            result["recent_insider_buys"] = buys
+            result["recent_insider_sells"] = sells
+    except Exception:
+        pass
+    return result
+
+
 def get_holders_data(ticker: str) -> dict:
     key = f"holders_{ticker}"
     cached = _load_cache(key, ttl_hours=TTL_HOLDERS)
@@ -851,15 +937,66 @@ def get_holders_data(ticker: str) -> dict:
     except Exception:
         pass
 
+    # ── Transacciones de insiders (compras/ventas de directivos) ────────────
+    # yfinance renombró columnas: la descripción vive en "Text" ("Sale at
+    # price…", "Purchase at price…", "Stock Award(Grant)…") y la fecha en
+    # "Start Date". Clasificamos el tipo desde "Text" y contamos compras/ventas.
     try:
         insiders = stock.insider_transactions
         if insiders is not None and not insiders.empty:
-            recent = insiders.head(20)
-            buys = recent[recent.get("Transaction", recent.get("Shares", pd.Series(dtype=str))).astype(str).str.contains("Buy|Purchase", case=False, na=False)]
-            result["recent_insider_buys"] = len(buys)
-            result["insider_transactions"] = recent[["Date", "Insider", "Position", "Shares", "Value"]].to_dict(orient="records") if all(c in recent.columns for c in ["Date", "Insider", "Position", "Shares", "Value"]) else []
+            recent = insiders.head(20).copy()
+            text_col = next((c for c in ("Text", "Transaction") if c in recent.columns), None)
+            txt = (recent[text_col].astype(str).str.lower()
+                   if text_col else pd.Series([""] * len(recent), index=recent.index))
+            is_buy = txt.str.contains("purchase|buy", na=False) & ~txt.str.contains("sale|sell", na=False)
+            is_sell = txt.str.contains("sale|sell", na=False)
+            result["recent_insider_buys"] = int(is_buy.sum())
+            result["recent_insider_sells"] = int(is_sell.sum())
+
+            date_col = next((c for c in ("Start Date", "Date") if c in recent.columns), None)
+            txns = []
+            for _, row in recent.iterrows():
+                t = str(row.get(text_col, "")) if text_col else ""
+                tl = t.lower()
+                if ("purchase" in tl or "buy" in tl) and "sale" not in tl:
+                    tipo = "compra"
+                elif "sale" in tl or "sell" in tl:
+                    tipo = "venta"
+                elif "gift" in tl:
+                    tipo = "donación"
+                elif "award" in tl or "grant" in tl:
+                    tipo = "concesión"
+                else:
+                    tipo = "otra"
+                try:
+                    shares = float(row.get("Shares", 0) or 0)
+                except Exception:
+                    shares = 0.0
+                try:
+                    value = float(row.get("Value", 0) or 0)
+                except Exception:
+                    value = 0.0
+                txns.append({
+                    "date": str(row.get(date_col, ""))[:10] if date_col else "",
+                    "insider": str(row.get("Insider", "")),
+                    "position": str(row.get("Position", "")),
+                    "shares": shares,
+                    "value": value,
+                    "type": tipo,
+                    "text": t,
+                })
+            result["insider_transactions"] = txns
     except Exception:
         pass
+
+    # Fallback Nasdaq SOLO para insiders si yfinance no los trajo (rate-limit en
+    # cloud). No toca la ruta institucional. Rellena solo lo que falta.
+    if not result.get("insider_transactions"):
+        nd = _get_insiders_from_nasdaq(ticker)
+        if nd.get("insider_transactions"):
+            result["insider_transactions"] = nd["insider_transactions"]
+            result["recent_insider_buys"] = nd.get("recent_insider_buys", 0)
+            result["recent_insider_sells"] = nd.get("recent_insider_sells", 0)
 
     try:
         mh = stock.major_holders

@@ -33,7 +33,7 @@ from dashboard.charts import (
     build_score_breakdown, build_mini_gauge, build_rr_chart,
     build_sector_heatmap, build_compact_gauge, build_rsi_gauge,
     build_metric_bars, build_earnings_history_chart,
-    build_sentiment_gauge, build_holders_bars,
+    build_sentiment_gauge, build_holders_bars, build_mountain_chart,
 )
 
 # ── Config de página ──────────────────────────────────────────────────────
@@ -41,13 +41,34 @@ st.set_page_config(
     page_title="DLP Market Analyzer",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 st.markdown(BLOOMBERG_CSS, unsafe_allow_html=True)
 
 
 # ── State inicial ─────────────────────────────────────────────────────────
+
+# Máximo de análisis en memoria (RAM) a la vez. Coincide con
+# MAX_ANALYSES_ON_DISK (persistence) para que la barra lateral, el disco y la
+# nube muestren lo mismo: los 10 más recientes.
+MAX_HISTORY_IN_MEMORY = 10
+
+
+def _prune_analyses_in_memory():
+    """Mantiene en session_state.analyses solo los MAX_HISTORY_IN_MEMORY más
+    recientes (por timestamp). NO borra nada de disco/nube — solo libera RAM."""
+    analyses = st.session_state.get("analyses") or {}
+    if len(analyses) <= MAX_HISTORY_IN_MEMORY:
+        return
+    keep = sorted(analyses.values(),
+                  key=lambda a: getattr(a, "timestamp", "") or "",
+                  reverse=True)[:MAX_HISTORY_IN_MEMORY]
+    keep_tickers = {a.ticker for a in keep}
+    for t in list(analyses.keys()):
+        if t not in keep_tickers:
+            del st.session_state.analyses[t]
+
 
 def init_state():
     from config.settings import SCANNER_DEFAULTS
@@ -68,6 +89,7 @@ def init_state():
         # Scanner personalizable
         "scanner_config_open": False,                # mostrar página de configuración
         "scanner_filters":     dict(SCANNER_DEFAULTS),  # selección UI actual
+        "sidebar_collapsed":   False,                # columna lateral minimizada
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -90,16 +112,41 @@ def init_state():
     for t in bad_tickers:
         del st.session_state.analyses[t]
 
-    # ── Cargar historial desde disco local ──
+    # ── Cargar historial: disco local primero (los 10 más recientes) ──
     if not st.session_state.get("_history_loaded"):
         try:
             from data.persistence import load_all_analyses as disk_load
             disk_saved = disk_load()
-            for ticker, analysis in disk_saved.items():
-                if ticker not in st.session_state.analyses and _is_valid_analysis(analysis):
-                    st.session_state.analyses[ticker] = analysis
+            valid = [a for a in disk_saved.values() if _is_valid_analysis(a)]
+            valid.sort(key=lambda a: getattr(a, "timestamp", "") or "", reverse=True)
+            for analysis in valid[:MAX_HISTORY_IN_MEMORY]:
+                if analysis.ticker not in st.session_state.analyses:
+                    st.session_state.analyses[analysis.ticker] = analysis
         except Exception:
             pass
+
+        # ── Hidratación desde la nube (Upstash) ──────────────────────────
+        # El disco de Streamlit Cloud es efímero: si se reinició el contenedor
+        # llegará vacío. En ese caso rehidratamos el historial desde Redis para
+        # que "se queden ahí" los últimos análisis. Solo pagamos el costo de red
+        # cuando el disco NO llenó los 10 (caso reinicio). Fallback total.
+        try:
+            if len(st.session_state.analyses) < MAX_HISTORY_IN_MEMORY:
+                from data.cache_store import (
+                    get_recent_analysis_tickers, get_cached_analysis,
+                )
+                for tk in get_recent_analysis_tickers():
+                    if len(st.session_state.analyses) >= MAX_HISTORY_IN_MEMORY:
+                        break
+                    if tk in st.session_state.analyses:
+                        continue
+                    obj = get_cached_analysis(tk)   # ya valida tesis > 200
+                    if obj is not None:
+                        st.session_state.analyses[tk] = obj
+        except Exception:
+            pass
+
+        _prune_analyses_in_memory()
         st.session_state._history_loaded = True
 
 
@@ -278,10 +325,98 @@ def render_header():
     """, unsafe_allow_html=True)
 
 
-# ── Sidebar: Brand + Watchlist ────────────────────────────────────────────
+# ── Sidebar: Brand + Historial (últimos 10 análisis · 3 escaneos) ─────────
+# La recomendación se codifica en la key del botón para que el CSS pinte el
+# color del rating sin tocar el markup.
+_REC_TO_SLUG = {
+    "MUY ATRACTIVO":  "strong_buy",
+    "ATRACTIVO":      "buy",
+    "EN OBSERVACIÓN": "watch",
+    "EVITAR":         "pass",
+    "STRONG BUY":     "strong_buy",
+    "BUY":            "buy",
+    "WATCH":          "watch",
+    "PASS":           "pass",
+}
+
+
+def _sb_go_home():
+    st.session_state.selected_ticker = None
+    st.session_state.quick_view_ticker = None
+    st.session_state.scan_results = []
+    st.session_state.current_scan_id = None
+    st.session_state._show_scan_results = False
+    st.session_state.scanner_config_open = False
+
+
+def _sb_load_analysis(ticker: str):
+    """Abre un análisis ya cacheado/persistido y limpia los otros modos."""
+    st.session_state.selected_ticker = ticker
+    st.session_state.quick_view_ticker = None
+    st.session_state.scan_results = []
+    st.session_state.current_scan_id = None
+    st.session_state._show_scan_results = False
+    st.session_state.scanner_config_open = False
+
+
+def _sb_load_scan(scan_id: str):
+    """Carga un escaneo guardado (disco primero, nube como respaldo) y lo
+    muestra en pantalla."""
+    results = []
+    try:
+        from data.persistence import load_scan_by_id
+        results = load_scan_by_id(scan_id)
+    except Exception:
+        results = []
+    if not results:
+        # Respaldo en la nube (Upstash) — el disco de Cloud es efímero.
+        try:
+            from data.cache_store import get_cloud_scan_results
+            from agents.screener import ScreenerResult
+            for r in get_cloud_scan_results(scan_id):
+                try:
+                    results.append(ScreenerResult(**r))
+                except Exception:
+                    continue
+        except Exception:
+            results = results or []
+    st.session_state.scan_results = results
+    st.session_state.current_scan_id = scan_id
+    st.session_state._show_scan_results = True
+    st.session_state.selected_ticker = None
+    st.session_state.quick_view_ticker = None
+    st.session_state.scanner_config_open = False
+    st.session_state._scan_diagnostics = {}
+
+
+def _sidebar_scan_labels():
+    """Devuelve los 3 escaneos más recientes como (scan_id, label, count).
+
+    Disco primero (I/O local, barato). Solo consulta la nube (Upstash) si el
+    disco NO llenó los 3 — típico tras un reinicio del contenedor con disco
+    efímero. Así NO añadimos latencia de red en cada rerun cuando el disco ya
+    tiene el historial. Fallback total."""
+    merged = {}
+    try:
+        from data.persistence import get_scan_history_labels
+        for sid, label, count in get_scan_history_labels():
+            merged[sid] = (sid, label, count)
+    except Exception:
+        pass
+    if len(merged) < 3:
+        try:
+            from data.cache_store import get_recent_cloud_scans
+            for sid, label, count in get_recent_cloud_scans():
+                merged.setdefault(sid, (sid, label, count))
+        except Exception:
+            pass
+    out = sorted(merged.values(), key=lambda x: x[0], reverse=True)
+    return out[:3]
+
+
 def render_sidebar():
     with st.sidebar:
-        # Brand
+        # ── Brand ───────────────────────────────────────────────────────
         st.markdown("""
         <div class="sidebar-brand">
             <div class="sidebar-brand-logo">◈ DLP</div>
@@ -289,18 +424,90 @@ def render_sidebar():
         </div>
         """, unsafe_allow_html=True)
 
-        # Reset / Home button
-        if st.button("⌂  Home", use_container_width=True, key="sidebar_home"):
-            st.session_state.selected_ticker = None
-            st.session_state.quick_view_ticker = None
-            st.session_state.scan_results = []
-            st.session_state.current_scan_id = None
-            st.session_state._show_scan_results = False
+        # ── Botón minimizar columna (el CSS lo posiciona sobre el logo) ──
+        if st.button("«", key="sidebar_collapse_btn", help="Minimizar la columna"):
+            st.session_state.sidebar_collapsed = True
             st.rerun()
 
-        # Watchlist e Historial de Scans eliminados — el usuario no los necesita.
-        # Los análisis siguen guardándose en disco (data/persistence.py) por si
-        # en el futuro queremos recuperarlos, pero no se muestran en el sidebar.
+        # ── Home ─────────────────────────────────────────────────────────
+        if st.button("⌂  Volver al Home", use_container_width=True, key="sidebar_home"):
+            _sb_go_home()
+            st.rerun()
+
+        # ── Historial: Análisis de Acciones ─────────────────────────────
+        st.markdown('<div class="sb-section-title">◈  Análisis · Acciones</div>',
+                    unsafe_allow_html=True)
+
+        analyses = st.session_state.get("analyses", {}) or {}
+        analyses_sorted = sorted(
+            analyses.values(),
+            key=lambda a: getattr(a, "timestamp", "") or "",
+            reverse=True,
+        )[:MAX_HISTORY_IN_MEMORY]
+
+        if not analyses_sorted:
+            st.markdown('<div class="sb-empty">Sin análisis guardados todavía</div>',
+                        unsafe_allow_html=True)
+        else:
+            for analysis in analyses_sorted:
+                ticker = analysis.ticker
+                rec = analysis.recommendation or "EN OBSERVACIÓN"
+                rec_slug = _REC_TO_SLUG.get(rec, "watch")
+                btn_key = f"sb_a_{ticker}__rec_{rec_slug}"
+                col_t, col_b = st.columns([5, 6], gap="small")
+                with col_t:
+                    if st.button(f"◈ {ticker}", key=btn_key, use_container_width=True,
+                                 help=f"Abrir análisis de {ticker} ({rec})"):
+                        _sb_load_analysis(ticker)
+                        st.rerun()
+                with col_b:
+                    st.markdown(f'<div class="sb-badge-wrap">{get_recommendation_badge(rec)}</div>',
+                                unsafe_allow_html=True)
+
+        # ── Separador ───────────────────────────────────────────────────
+        st.markdown('<div class="sb-section-divider"></div>', unsafe_allow_html=True)
+
+        # ── Historial: Escaneos del Mercado ─────────────────────────────
+        st.markdown('<div class="sb-section-title">Escaneos · Mercado</div>',
+                    unsafe_allow_html=True)
+
+        scans = _sidebar_scan_labels()
+        if not scans:
+            st.markdown('<div class="sb-empty">Sin escaneos guardados todavía</div>',
+                        unsafe_allow_html=True)
+        else:
+            for scan_id, label, count in scans:
+                col_l, col_c = st.columns([6, 4], gap="small")
+                with col_l:
+                    if st.button(f"⊕ {label}", key=f"sb_s_{scan_id}",
+                                 use_container_width=True,
+                                 help=f"Cargar {label} ({count} candidatos)"):
+                        _sb_load_scan(scan_id)
+                        st.rerun()
+                with col_c:
+                    st.markdown(
+                        f'<div class="sb-badge-wrap">'
+                        f'<span class="sb-count-badge">{count}'
+                        f'<span class="sb-count-sub">cand.</span>'
+                        f'</span></div>',
+                        unsafe_allow_html=True,
+                    )
+
+
+def _apply_sidebar_collapse():
+    """Si la columna está minimizada la oculta (el contenido se reajusta solo)
+    y muestra un botón »» para reabrirla. Puramente visual — no toca datos ni
+    flujos; el sidebar se sigue renderizando (estado intacto), solo se oculta."""
+    if not st.session_state.get("sidebar_collapsed"):
+        return
+    st.markdown(
+        "<style>body [data-testid='stSidebar'],"
+        "body section[data-testid='stSidebar']{display:none !important;}</style>",
+        unsafe_allow_html=True,
+    )
+    if st.button("»", key="sidebar_expand_btn", help="Mostrar la columna"):
+        st.session_state.sidebar_collapsed = False
+        st.rerun()
 
 
 def render_top_nav():
@@ -365,6 +572,14 @@ def run_analysis(ticker: str):
         st.session_state.analyses[ticker] = shared
         st.session_state.selected_ticker = ticker
         st.session_state.quick_view_ticker = None
+        _prune_analyses_in_memory()
+        # Marca este ticker como reciente en el índice de la nube (para la barra
+        # lateral tras un reinicio). No-op sin credenciales; nunca bloquea.
+        try:
+            from data.cache_store import record_recent_analysis
+            record_recent_analysis(ticker)
+        except Exception:
+            pass
         st.rerun()
         return
 
@@ -479,6 +694,7 @@ def run_analysis(ticker: str):
     st.session_state.selected_ticker = ticker
     st.session_state.quick_view_ticker = None
     st.session_state.analyzing = False
+    _prune_analyses_in_memory()
 
     # Guardar a disco en background — no bloqueamos el rerun por IO.
     # El usuario ve el análisis listo en vez de esperar a que termine
@@ -486,16 +702,18 @@ def run_analysis(ticker: str):
     thesis_ok = len(getattr(analysis, "investment_thesis", "") or "") > 200
     if thesis_ok:
         def _save_bg():
-            # Guardar a disco local (siempre)
+            # Guardar a disco local (siempre; poda a los 10 más recientes)
             try:
                 disk_save(analysis)
             except Exception:
                 pass
             # Guardar al caché compartido Upstash (no-op si no hay credenciales).
-            # Así el próximo usuario que pida este ticker en 30 días lo reutiliza.
+            # Así el próximo usuario que pida este ticker en 30 días lo reutiliza,
+            # y la barra lateral lo recupera tras un reinicio del contenedor.
             try:
-                from data.cache_store import save_cached_analysis
+                from data.cache_store import save_cached_analysis, record_recent_analysis
                 save_cached_analysis(ticker, analysis)
+                record_recent_analysis(ticker)
             except Exception:
                 pass
         _threading.Thread(target=_save_bg, daemon=True).start()
@@ -525,12 +743,12 @@ def run_market_scan(filters: Optional[dict] = None):
         pct = idx / total if total > 0 else 0
         progress_bar.progress(pct)
         progress_placeholder.markdown(
-            f'<div style="color:#FFA500;font-family:JetBrains Mono;font-size:0.85rem;">'
-            f'🌐 Escaneando mercado: {ticker} ({idx}/{total})</div>',
+            f'<div style="color:#C08E3B;font-family:JetBrains Mono;font-size:0.85rem;">'
+            f'🌐 Escaneando el mercado · {ticker} ({idx}/{total})</div>',
             unsafe_allow_html=True,
         )
 
-    with st.spinner("Escaneando el universo (NYSE + NASDAQ via TradingView)..."):
+    with st.spinner("Escaneando el mercado…"):
         results = screener.run_full_scan(callback=scan_callback, filters=filters)
 
     # Guardar diagnóstico para mostrar en la pantalla de resultados
@@ -556,6 +774,35 @@ def run_market_scan(filters: Optional[dict] = None):
             scan_id = disk_save_scan(results)
             if scan_id:
                 st.session_state.current_scan_id = scan_id
+                # Persistir también en la nube (Upstash) para que la barra
+                # lateral conserve los escaneos tras un reinicio del contenedor.
+                # En un hilo aparte para no bloquear el rerun con el POST.
+                # No-op sin credenciales; nunca lanza.
+                def _cloud_scan_bg(sid, res):
+                    try:
+                        from dataclasses import asdict
+                        from datetime import datetime as _dt
+                        from data.persistence import scan_label
+                        from data.cache_store import save_cloud_scan
+                        rows = []
+                        for r in res:
+                            try:
+                                rows.append(asdict(r))
+                            except Exception:
+                                try:
+                                    rows.append(dict(r.__dict__))
+                                except Exception:
+                                    pass
+                        now = _dt.now()
+                        data = {"scan_id": sid, "timestamp": now.isoformat(),
+                                "label": scan_label(now), "count": len(res),
+                                "results": rows}
+                        save_cloud_scan(sid, data)
+                    except Exception:
+                        pass
+                import threading as _th
+                _th.Thread(target=_cloud_scan_bg, args=(scan_id, list(results)),
+                           daemon=True).start()
         except Exception:
             pass
 
@@ -569,8 +816,8 @@ def _render_agent_header(report):
     score = report.score
     color = score_color(score)
     icon = AGENT_ICONS.get(report.agent_name, "📊")
-    conv_colors = {"HIGH": "#00FF88", "MEDIUM": "#FFB84D", "LOW": "#FF3B5C"}
-    conv_color = conv_colors.get(report.conviction, "#FFB84D")
+    conv_colors = {"HIGH": "#3DD68C", "MEDIUM": "#E2B25C", "LOW": "#F1495F"}
+    conv_color = conv_colors.get(report.conviction, "#E2B25C")
     st.markdown(f"""
     <div class="agent-header">
         <div class="agent-header-left">
@@ -587,8 +834,44 @@ def _render_agent_header(report):
     """, unsafe_allow_html=True)
 
 
+def _strip_ui_emoji(text):
+    """Quita emojis decorativos al inicio de un título de UI (el texto queda)."""
+    import re as _re
+    try:
+        return _re.sub(r'^[\U0001F000-\U0001FAFF☀-➿⬀-⯿️‍\s]+', '', str(text)).strip() or str(text)
+    except Exception:
+        return text
+
+
+def _meter_scale(value, lo, hi, invert=False):
+    """Escala un dato real a 0–100 para el termómetro. lo→0, hi→100 (clamp).
+    invert=True cuando MENOS es mejor (P/E, deuda, EV/EBITDA…). None si no hay dato."""
+    try:
+        if value is None:
+            return None
+        v = float(value)
+        pct = (v - lo) / (hi - lo) * 100.0
+        pct = max(2.0, min(98.0, pct))
+        return 100.0 - pct if invert else pct
+    except Exception:
+        return None
+
+
+def _meter_html(pct):
+    """Termómetro rojo→ámbar→verde con dot en la posición del dato."""
+    if pct is None:
+        return ""
+    dot = "#F1495F" if pct < 35 else "#E2B25C" if pct < 68 else "#3DD68C"
+    glow = {"#F1495F": "241,73,95", "#E2B25C": "226,178,92", "#3DD68C": "61,214,140"}[dot]
+    return (f'<div class="meter"><span class="meter-dot" style="left:{pct:.0f}%;'
+            f'background:{dot};box-shadow:0 0 0 3px rgba({glow},0.18), 0 0 8px rgba({glow},0.45);">'
+            f'</span></div>')
+
+
 def _render_metric_tiles(metrics):
-    """Fila de KPI tiles. metrics = [{icon, label, value, color, tooltip?}]"""
+    """Fila de KPI tiles. metrics = [{icon, label, value, color, tooltip?, meter?}]
+    `meter` (0-100 opcional) pinta el termómetro de calidad del dato.
+    El icon se acepta por compatibilidad pero NO se renderiza (sin emojis-icono)."""
     if not metrics:
         return
     cols = st.columns(len(metrics))
@@ -599,69 +882,84 @@ def _render_metric_tiles(metrics):
             st.markdown(f"""
             <div class="kpi-tile">
                 <div class="kpi-tile-header">
-                    <span class="kpi-tile-label">{m.get('icon', '')} {m['label']}</span>
+                    <span class="kpi-tile-label">{m['label']}</span>
                     {help_html}
                 </div>
                 <div class="kpi-tile-value" style="color:{m['color']};">{m['value']}</div>
+                {_meter_html(m.get('meter'))}
             </div>
             """, unsafe_allow_html=True)
 
 
 def _render_status_pills(pills):
-    """Fila de pills de estado. pills = [{label, value, level}], level = good/neutral/warn/bad"""
+    """Fila de pills de estado. pills = [{label, value, level, meter?}].
+    El color vive en un punto indicador y el termómetro traduce el nivel
+    (o un `meter` 0-100 explícito) a posición rojo→ámbar→verde."""
     if not pills:
         return
-    level_colors = {"good": "#00FF88", "neutral": "#4A9EFF", "warn": "#FFB84D", "bad": "#FF3B5C"}
+    level_colors = {"good": "#3DD68C", "neutral": "#8D949E", "warn": "#E2B25C", "bad": "#F1495F"}
+    level_meter = {"good": 88.0, "neutral": 55.0, "warn": 42.0, "bad": 12.0}
     cols = st.columns(len(pills))
     for col, p in zip(cols, pills):
         with col:
-            color = level_colors.get(p.get("level", "neutral"), "#4A9EFF")
+            level = p.get("level", "neutral")
+            color = level_colors.get(level, "#8D949E")
+            pct = p.get("meter", level_meter.get(level, 55.0))
             sub = p.get("sub", "")
             sub_html = f'<div class="status-pill-sub">{sub}</div>' if sub else ''
             st.markdown(f"""
-            <div class="status-pill" style="border-color:{color}40;border-left:3px solid {color};">
+            <div class="status-pill">
                 <div class="status-pill-label">{p['label']}</div>
-                <div class="status-pill-value" style="color:{color};">{p['value']}</div>
+                <div class="status-pill-value"><span class="status-pill-dot" style="background:{color};"></span>{p['value']}</div>
                 {sub_html}
+                {_meter_html(pct)}
             </div>
             """, unsafe_allow_html=True)
 
 
-def _render_pros_cons(report, pros_title="💪 Top 3 Señales Positivas", cons_title="⚠️ Top 3 Señales Negativas"):
+def _signal_card_html(title, items, kind):
+    """Tarjeta única que agrupa las señales (kind = 'pos'|'neg')."""
+    cls = "strength-item" if kind == "pos" else "risk-item"
+    title_cls = "strength" if kind == "pos" else "risk"
+    rows = "".join(f'<div class="{cls}">{i}</div>' for i in items)
+    return (f'<div class="signal-card signal-card--{kind}">'
+            f'<div class="thesis-section-title {title_cls}">{_strip_ui_emoji(title)}</div>'
+            f'{rows}</div>')
+
+
+def _render_pros_cons(report, pros_title="Señales positivas", cons_title="Señales de riesgo"):
     # Cap a máximo 3 cada uno — garantiza el límite sin importar lo que devuelva
     # la IA (las muestra como "las 3 más importantes"). Ahorra y ordena la UI.
     col_p, col_c = st.columns(2)
     with col_p:
         if report.pros:
-            st.markdown(f'<div class="thesis-section-title strength">{pros_title}</div>', unsafe_allow_html=True)
-            for p in report.pros[:3]:
-                st.markdown(f'<div class="strength-item">{p}</div>', unsafe_allow_html=True)
+            st.markdown(_signal_card_html(pros_title, report.pros[:3], "pos"),
+                        unsafe_allow_html=True)
     with col_c:
         if report.cons:
-            st.markdown(f'<div class="thesis-section-title risk">{cons_title}</div>', unsafe_allow_html=True)
-            for c in report.cons[:3]:
-                st.markdown(f'<div class="risk-item">{c}</div>', unsafe_allow_html=True)
+            st.markdown(_signal_card_html(cons_title, report.cons[:3], "neg"),
+                        unsafe_allow_html=True)
 
 
 def _render_analysis_card(report, title="Análisis Detallado"):
     if not report.analysis:
         return
-    st.markdown(f'<div class="section-title-bar">📝 {title}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="section-title-bar">{_strip_ui_emoji(title)}</div>', unsafe_allow_html=True)
     st.markdown(
         f'<div class="analysis-card"><div class="analysis-text">{report.analysis}</div></div>',
         unsafe_allow_html=True,
     )
 
 
-def _render_insight_card(title, content, color="#FFB84D", icon="💡"):
-    """Card con borde lateral coloreado para insights especiales."""
+def _render_insight_card(title, content, color="#E2B25C", icon="💡"):
+    """Card con barra lateral fina de acento semántico. El icon se acepta por
+    compatibilidad pero no se renderiza (sin emojis-icono)."""
     if not content or not isinstance(content, str) or len(content) < 5:
         return
     st.markdown(f"""
-    <div class="insight-card" style="border-left-color:{color};background:linear-gradient(135deg,{color}0D,{color}03);">
+    <div class="insight-card" style="border-left-color:{color};">
         <div class="insight-card-header">
-            <span class="insight-card-icon">{icon}</span>
-            <span class="insight-card-title" style="color:{color};">{title}</span>
+            <span class="insight-card-title" style="color:{color};">{_strip_ui_emoji(title)}</span>
         </div>
         <div class="insight-card-body">{content}</div>
     </div>
@@ -944,8 +1242,8 @@ def render_overview(analysis: StockAnalysis):
         )
 
         # Conviction
-        conviction_color = {"HIGH": "#00FF88", "MEDIUM": "#FFA500", "LOW": "#FF3B5C"}.get(
-            analysis.conviction_level, "#FFA500"
+        conviction_color = {"HIGH": "#3DD68C", "MEDIUM": "#C08E3B", "LOW": "#F1495F"}.get(
+            analysis.conviction_level, "#C08E3B"
         )
         st.markdown(
             f'<div style="text-align:center;font-family:JetBrains Mono;font-size:0.75rem;color:{conviction_color};margin-top:4px;">'
@@ -990,7 +1288,7 @@ def render_overview(analysis: StockAnalysis):
 
         # ── Métricas Clave (4 KPIs premium con tooltips) ─────────
         if any([analysis.entry_price, analysis.target_price, analysis.risk_reward, analysis.position_size_pct]):
-            st.markdown('<div class="kpi-section-title">📊 Métricas Clave</div>', unsafe_allow_html=True)
+            st.markdown('<div class="kpi-section-title">Métricas Clave</div>', unsafe_allow_html=True)
 
             # El "Precio Actual" debe reflejar SIEMPRE el precio en vivo del
             # momento en que se abre el análisis — aunque el análisis venga de
@@ -1010,23 +1308,23 @@ def render_overview(analysis: StockAnalysis):
 
             metrics = [
                 {
-                    "icon": "📍", "label": "Precio Actual", "value": entry_str, "color": "#FFB84D",
+                    "icon": "📍", "label": "Precio Actual", "value": entry_str, "color": "#E2B25C",
                     "tooltip": "Precio actual del activo en vivo (se refresca al abrir el análisis). Se usa como línea de referencia para calcular el upside hasta el precio objetivo y el downside hasta el nivel de protección.",
                 },
                 {
-                    "icon": "🏁", "label": "Precio Objetivo", "value": target_str, "color": "#00FF88",
+                    "icon": "🏁", "label": "Precio Objetivo", "value": target_str, "color": "#3DD68C",
                     "tooltip": "Precio donde tomar ganancias totales o parciales. Combina la resistencia técnica cercana (52W high, niveles psicológicos) con el valor intrínseco fundamental estimado.",
                 },
                 {
                     "icon": "⚖️", "label": "R/R Ratio", "value": rr_str,
-                    "color": ("#00FF88" if (rr_num or 0) >= 3 else
-                              "#FFB84D" if (rr_num or 0) >= 2 else "#FF3B5C"),
+                    "color": ("#3DD68C" if (rr_num or 0) >= 3 else
+                              "#E2B25C" if (rr_num or 0) >= 2 else "#F1495F"),
                     "tooltip": "Risk/Reward Ratio — relación entre la ganancia potencial al target y la pérdida máxima al stop. Un 3:1 significa que arriesgas 1 para ganar 3. Mínimo aceptable para operar: 2:1. El color del valor indica si supera el umbral (verde ≥3, amarillo ≥2, rojo <2).",
                 },
                 {
                     "icon": "📐", "label": "Sizing", "value": sizing_str,
-                    "color": ("#FF3B5C" if (sizing_num or 0) == 0 else
-                              "#9B59FF"),
+                    "color": ("#F1495F" if (sizing_num or 0) == 0 else
+                              "#9D8CE0"),
                     "tooltip": "Position Sizing — porcentaje del portafolio sugerido. Calculado vía Kelly Criterion modificado. 0% indica que el sistema recomienda NO operar (R/R insuficiente).",
                 },
             ]
@@ -1043,9 +1341,9 @@ def render_overview(analysis: StockAnalysis):
                 }.get(quality_verdict, quality_verdict.title())
                 metrics.append({
                     "icon": "🏛️", "label": "Calidad LP", "value": f"{lt_quality:.0f}/100",
-                    "color": ("#00FF88" if lt_quality >= 85 else
-                              "#4A9EFF" if lt_quality >= 70 else
-                              "#FFB84D" if lt_quality >= 55 else "#FF3B5C"),
+                    "color": ("#3DD68C" if lt_quality >= 85 else
+                              "#6FA3E0" if lt_quality >= 70 else
+                              "#E2B25C" if lt_quality >= 55 else "#F1495F"),
                     "tooltip": f"Calidad estructural de largo plazo (3-7 años). Promedio de Fundamentales + Future Viability. Veredicto: {verdict_es}. Empresas con score ≥85 son COMPOUNDERS (best-in-class) que merecen hold de muy largo plazo.",
                 })
 
@@ -1160,13 +1458,64 @@ def render_technical(analysis: StockAnalysis):
     df = get_price_history(analysis.ticker, period="2y")
     indicators = compute_technical_indicators(df) if not df.empty else {}
 
-    st.markdown('<div class="section-title-bar">📈 Chart Multi-Indicador</div>', unsafe_allow_html=True)
-    fig = build_price_chart(df, indicators, analysis.ticker)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True},
-                    key=f"chart_technical_price_{analysis.ticker}")
+    # ── MODO DE ANÁLISIS ───────────────────────────────────────────────────
+    # Un único control, centrado y protagonista, con dos modos:
+    #   Pro     → gráfica completa (velas + medias + volumen + RSI + MACD)
+    #   Básico  → versión simplificada (solo el cierre, con degradado)
+    # Se usan dos st.button en vez de st.segmented_control porque este último
+    # no admite iconos en las etiquetas y su contenedor real es
+    # data-testid="stButtonGroup" (no "stSegmentedControl"), difícil de anclar.
+    # Con botones, cada uno lleva la clase estable .st-key-<key>, sobre la que
+    # el CSS dibuja el icono y centra el bloque.
+    PRO, BASICO = "pro", "basico"
+    mode_key = "_chart_mode"
+
+    # Cualquier análisis abre SIEMPRE en modo Pro: al cambiar la acción que se
+    # está viendo se restablece el defecto.
+    if st.session_state.get("_chart_mode_ticker") != analysis.ticker:
+        st.session_state["_chart_mode_ticker"] = analysis.ticker
+        st.session_state[mode_key] = PRO
+    mode = st.session_state.get(mode_key, PRO)
+
+    st.markdown("""
+    <div class="mode-switch-head">
+        <span class="mode-switch-rule"></span>
+        <span class="mode-switch-label">Modo de análisis</span>
+        <span class="mode-switch-rule"></span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # [1,2,2,1] deja las dos columnas centrales justo en el centro de la
+    # página, y el CSS centra cada botón dentro de la suya. Se les da 1/3 del
+    # ancho (no 1/6) para que en un iframe estrecho el botón siga teniendo
+    # sitio de sobra y la etiqueta nunca se parta.
+    _ms_l, ms_pro, ms_bas, _ms_r = st.columns([1, 2, 2, 1], gap="small")
+    with ms_pro:
+        if st.button("Pro", key="chart_mode_pro", use_container_width=True,
+                     type="primary" if mode == PRO else "secondary"):
+            st.session_state[mode_key] = PRO
+            st.rerun()
+    with ms_bas:
+        if st.button("Básico", key="chart_mode_basico", use_container_width=True,
+                     type="primary" if mode == BASICO else "secondary"):
+            st.session_state[mode_key] = BASICO
+            st.rerun()
+
+    is_line = (mode == BASICO)
+
+    title = "Precio — Vista Simplificada" if is_line else "Chart Multi-Indicador"
+    st.markdown(f'<div class="section-title-bar">{title}</div>', unsafe_allow_html=True)
+
+    fig = (build_mountain_chart(df, analysis.ticker) if is_line
+           else build_price_chart(df, indicators, analysis.ticker))
+    st.plotly_chart(
+        fig, use_container_width=True,
+        config={"displayModeBar": False},
+        key=f"chart_technical_price_{analysis.ticker}_{'line' if is_line else 'candles'}",
+    )
 
     # ── Status pills clave (Stage, RSI, MACD, Distancia 52W high) ──
-    st.markdown('<div class="section-title-bar">🎯 Indicadores Clave</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title-bar">Indicadores Clave</div>', unsafe_allow_html=True)
 
     stage = indicators.get("stage", 0) or 0
     stage_level = "good" if stage == 2 else "neutral" if stage == 1 else "warn" if stage == 3 else "bad"
@@ -1193,17 +1542,17 @@ def render_technical(analysis: StockAnalysis):
     ])
 
     # ── Performance vs MAs y vs SPY ──
-    st.markdown('<div class="section-title-bar">📊 Performance Relativa</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title-bar">Performance Relativa</div>', unsafe_allow_html=True)
 
     rs = tech_report.raw_data.get("rs", {}) or {}
     col_mas, col_rs = st.columns(2)
 
     with col_mas:
         ma_items = []
-        for n, color in [(20, "#4A9EFF"), (50, "#FFD740"), (150, "#FF6B35"), (200, "#FF3B5C")]:
+        for n, color in [(20, "#6FA3E0"), (50, "#F0C878"), (150, "#E0703F"), (200, "#F1495F")]:
             pct = indicators.get(f"price_vs_sma{n}_pct")
             if pct is not None:
-                bar_color = "#00FF88" if pct > 0 else "#FF3B5C"
+                bar_color = "#3DD68C" if pct > 0 else "#F1495F"
                 ma_items.append((f"vs SMA {n}", pct, bar_color))
         if ma_items:
             fig_ma = build_metric_bars(ma_items, height=220, title="DISTANCIA A MOVING AVERAGES")
@@ -1215,7 +1564,7 @@ def render_technical(analysis: StockAnalysis):
         for period, label in [("rs_1m", "RS 1M"), ("rs_3m", "RS 3M"), ("rs_6m", "RS 6M")]:
             v = rs.get(period)
             if v is not None:
-                bar_color = "#00FF88" if v > 0 else "#FF3B5C"
+                bar_color = "#3DD68C" if v > 0 else "#F1495F"
                 rs_items.append((label, v, bar_color))
         if rs_items:
             fig_rs = build_metric_bars(rs_items, height=220, title="RELATIVE STRENGTH vs S&P 500")
@@ -1258,7 +1607,7 @@ def render_fundamentals(analysis: StockAnalysis):
     ratios = {**(rd.get("ratios") or {}), **ratios_fresh}
 
     # ── KPI tiles: Crecimiento + Rentabilidad ─────────────────────
-    st.markdown('<div class="section-title-bar">💰 Crecimiento y Rentabilidad</div>',
+    st.markdown('<div class="section-title-bar">Crecimiento y Rentabilidad</div>',
                 unsafe_allow_html=True)
 
     rev_growth = ratios.get("revenue_growth_yoy")
@@ -1276,24 +1625,28 @@ def render_fundamentals(analysis: StockAnalysis):
     _render_metric_tiles([
         {"icon": "📈", "label": "Revenue Growth YoY",
          "value": f"{rev_growth:+.1f}%" if rev_growth is not None else "—",
-         "color": "#00FF88" if (rev_growth or 0) > 0 else "#FF3B5C",
+         "color": "#3DD68C" if (rev_growth or 0) > 0 else "#F1495F",
+         "meter": _meter_scale(rev_growth, -5, 30),
          "tooltip": "Crecimiento de ingresos año contra año. >15% es excelente."},
         {"icon": "🎯", "label": "ROIC",
          "value": f"{roic:.1f}%" if roic is not None else "—",
-         "color": "#00FF88" if (roic or 0) > 15 else "#FFB84D" if (roic or 0) > 8 else "#FF3B5C",
+         "color": "#3DD68C" if (roic or 0) > 15 else "#E2B25C" if (roic or 0) > 8 else "#F1495F",
+         "meter": _meter_scale(roic, 0, 25),
          "tooltip": "Return on Invested Capital. >15% indica negocio de alta calidad."},
         {"icon": "💵", "label": "FCF Yield",
          "value": f"{fcf_yield:.2f}%" if fcf_yield is not None else "—",
-         "color": "#00FF88" if (fcf_yield or 0) > 5 else "#FFB84D" if (fcf_yield or 0) > 2 else "#FF3B5C",
+         "color": "#3DD68C" if (fcf_yield or 0) > 5 else "#E2B25C" if (fcf_yield or 0) > 2 else "#F1495F",
+         "meter": _meter_scale(fcf_yield, 0, 8),
          "tooltip": "Free Cash Flow Yield. FCF / Market Cap. >5% es atractivo."},
         {"icon": "📊", "label": "Gross Margin",
          "value": f"{gross_marg:.1f}%" if gross_marg is not None else "—",
-         "color": "#00FF88" if (gross_marg or 0) > 50 else "#FFB84D" if (gross_marg or 0) > 30 else "#FF3B5C",
+         "color": "#3DD68C" if (gross_marg or 0) > 50 else "#E2B25C" if (gross_marg or 0) > 30 else "#F1495F",
+         "meter": _meter_scale(gross_marg, 20, 70),
          "tooltip": "Margen bruto: indica pricing power. >50% es excepcional."},
     ])
 
     # ── Valoración tiles ─────────────────────────────────────────
-    st.markdown('<div class="section-title-bar">🧮 Múltiplos de Valoración</div>',
+    st.markdown('<div class="section-title-bar">Múltiplos de Valoración</div>',
                 unsafe_allow_html=True)
 
     # Todos los múltiplos vienen DIRECTOS de yfinance (siempre frescos)
@@ -1306,17 +1659,21 @@ def render_fundamentals(analysis: StockAnalysis):
 
     _render_metric_tiles([
         {"icon": "💎", "label": "P/E Trailing",
-         "value": f"{pe:.1f}" if pe else "—", "color": "#4A9EFF",
+         "value": f"{pe:.1f}" if pe else "—", "color": "#6FA3E0",
+         "meter": _meter_scale(pe, 10, 45, invert=True),
          "tooltip": "Price/Earnings (trailing). Múltiplo precio/utilidad de los últimos 12 meses. Compara contra el sector y la historia de la empresa."},
         {"icon": "🔮", "label": "P/E Forward",
-         "value": f"{fwd_pe:.1f}" if fwd_pe else "—", "color": "#4A9EFF",
+         "value": f"{fwd_pe:.1f}" if fwd_pe else "—", "color": "#6FA3E0",
+         "meter": _meter_scale(fwd_pe, 8, 40, invert=True),
          "tooltip": "Price/Earnings forward. Basado en el EPS estimado del próximo año. Si está bastante por debajo del trailing, indica crecimiento esperado."},
         {"icon": "🏛️", "label": "EV/EBITDA",
-         "value": f"{ev_ebit:.1f}" if ev_ebit else "—", "color": "#9B59FF",
+         "value": f"{ev_ebit:.1f}" if ev_ebit else "—", "color": "#9D8CE0",
+         "meter": _meter_scale(ev_ebit, 8, 24, invert=True),
          "tooltip": "Enterprise Value / EBITDA. <12 suele ser atractivo, >20 ya es caro. Es más fiable que P/E para comparar empresas con diferente estructura de capital."},
         {"icon": "🏦", "label": "Debt/Equity",
          "value": f"{de:.2f}" if de is not None else "—",
-         "color": "#00FF88" if (de or 0) < 0.5 else "#FFB84D" if (de or 0) < 1.5 else "#FF3B5C",
+         "color": "#3DD68C" if (de or 0) < 0.5 else "#E2B25C" if (de or 0) < 1.5 else "#F1495F",
+         "meter": _meter_scale(de, 0, 2.5, invert=True),
          "tooltip": "Apalancamiento financiero (deuda/equity). <0.5 = sano, >1.5 = riesgoso. Negocios con cash flow estable toleran más deuda."},
     ])
 
@@ -1326,14 +1683,16 @@ def render_fundamentals(analysis: StockAnalysis):
         extra_tiles.append({
             "icon": "⚙️", "label": "Operating Margin",
             "value": f"{op_marg:.1f}%",
-            "color": "#00FF88" if op_marg > 20 else "#FFB84D" if op_marg > 10 else "#FF3B5C",
+            "color": "#3DD68C" if op_marg > 20 else "#E2B25C" if op_marg > 10 else "#F1495F",
+            "meter": _meter_scale(op_marg, 0, 32),
             "tooltip": "Margen operativo: % de cada dólar de ingresos que queda tras costos operativos. >20% indica negocio escalable y eficiente.",
         })
     if ps is not None:
         extra_tiles.append({
             "icon": "📏", "label": "P/S Ratio",
             "value": f"{ps:.2f}",
-            "color": "#9B59FF",
+            "color": "#9D8CE0",
+            "meter": _meter_scale(ps, 1, 12, invert=True),
             "tooltip": "Price/Sales. Útil para empresas no rentables aún (SaaS, biotech). <3 suele ser razonable, >10 implica altas expectativas de crecimiento.",
         })
     roe_val = ratios.get("roe")
@@ -1341,7 +1700,8 @@ def render_fundamentals(analysis: StockAnalysis):
         extra_tiles.append({
             "icon": "💼", "label": "ROE",
             "value": f"{roe_val:.1f}%",
-            "color": "#00FF88" if roe_val > 15 else "#FFB84D" if roe_val > 8 else "#FF3B5C",
+            "color": "#3DD68C" if roe_val > 15 else "#E2B25C" if roe_val > 8 else "#F1495F",
+            "meter": _meter_scale(roe_val, 0, 30),
             "tooltip": "Return on Equity: rentabilidad sobre patrimonio. >15% es excelente, indica gestión eficiente del capital de accionistas.",
         })
     cr = ratios.get("current_ratio")
@@ -1349,7 +1709,8 @@ def render_fundamentals(analysis: StockAnalysis):
         extra_tiles.append({
             "icon": "💧", "label": "Current Ratio",
             "value": f"{cr:.2f}",
-            "color": "#00FF88" if cr > 1.5 else "#FFB84D" if cr > 1 else "#FF3B5C",
+            "color": "#3DD68C" if cr > 1.5 else "#E2B25C" if cr > 1 else "#F1495F",
+            "meter": _meter_scale(cr, 0.7, 2.5),
             "tooltip": "Liquidez de corto plazo: activos corrientes / pasivos corrientes. >1.5 = sólido, <1 = posible estrés de caja.",
         })
 
@@ -1357,7 +1718,7 @@ def render_fundamentals(analysis: StockAnalysis):
         _render_metric_tiles(extra_tiles[:4])
 
     # ── Datos directos de Yahoo Finance ──────────────────────────
-    st.markdown('<div class="section-title-bar">📡 Datos Yahoo Finance</div>',
+    st.markdown('<div class="section-title-bar">Datos Yahoo Finance</div>',
                 unsafe_allow_html=True)
 
     # Market Cap
@@ -1374,9 +1735,9 @@ def render_fundamentals(analysis: StockAnalysis):
     # Profit Margin (directo de YF — decimal)
     pm_raw = info.get("profit_margin")
     pm_str = f"{pm_raw*100:.2f}%" if pm_raw is not None else "—"
-    pm_color = ("#00FF88" if (pm_raw or 0)*100 > 20
-                else "#FFB84D" if (pm_raw or 0)*100 > 10
-                else "#FF3B5C")
+    pm_color = ("#3DD68C" if (pm_raw or 0)*100 > 20
+                else "#E2B25C" if (pm_raw or 0)*100 > 10
+                else "#F1495F")
 
     # Revenue TTM (directo de YF)
     rev_ttm = info.get("revenue_ttm", 0) or 0
@@ -1392,19 +1753,19 @@ def render_fundamentals(analysis: StockAnalysis):
     # Beta (directo de YF)
     beta_raw = info.get("beta")
     beta_str = f"{beta_raw:.2f}" if isinstance(beta_raw, (int, float)) else "—"
-    beta_color = ("#00FF88" if isinstance(beta_raw, (int, float)) and beta_raw < 1
-                  else "#FFB84D" if isinstance(beta_raw, (int, float)) and beta_raw <= 1.5
-                  else "#FF3B5C")
+    beta_color = ("#3DD68C" if isinstance(beta_raw, (int, float)) and beta_raw < 1
+                  else "#E2B25C" if isinstance(beta_raw, (int, float)) and beta_raw <= 1.5
+                  else "#F1495F")
 
     _render_metric_tiles([
         {"icon": "💎", "label": "Market Cap",
-         "value": mktcap_str, "color": "#FFB84D",
+         "value": mktcap_str, "color": "#E2B25C",
          "tooltip": "Capitalización de mercado total (precio × acciones en circulación). Fuente: Yahoo Finance."},
         {"icon": "📊", "label": "Profit Margin",
          "value": pm_str, "color": pm_color,
          "tooltip": "Margen neto (Profit Margin) directo de Yahoo Finance. % de cada dólar de ingresos que queda como ganancia neta."},
         {"icon": "💰", "label": "Revenue TTM",
-         "value": rev_ttm_str, "color": "#4A9EFF",
+         "value": rev_ttm_str, "color": "#6FA3E0",
          "tooltip": "Ingresos totales de los últimos 12 meses (Trailing Twelve Months). Fuente: Yahoo Finance."},
         {"icon": "📈", "label": "Beta",
          "value": beta_str, "color": beta_color,
@@ -1412,15 +1773,15 @@ def render_fundamentals(analysis: StockAnalysis):
     ])
 
     # ── Desglose de sub-scores ───────────────────────────────────
-    st.markdown('<div class="section-title-bar">⚖️ Pilares Fundamentales</div>',
+    st.markdown('<div class="section-title-bar">Pilares Fundamentales</div>',
                 unsafe_allow_html=True)
 
     sub_items = []
     pillars = [
-        ("Calidad",          sub.get("quality"),           "#FFB84D"),
-        ("Crecimiento",      sub.get("growth"),            "#00FF88"),
-        ("Valoración",       sub.get("valuation"),         "#4A9EFF"),
-        ("Solidez Financiera", sub.get("financial_health"), "#9B59FF"),
+        ("Calidad",          sub.get("quality"),           "#E2B25C"),
+        ("Crecimiento",      sub.get("growth"),            "#3DD68C"),
+        ("Valoración",       sub.get("valuation"),         "#6FA3E0"),
+        ("Solidez Financiera", sub.get("financial_health"), "#9D8CE0"),
     ]
     for label, val, color in pillars:
         if val is not None:
@@ -1443,9 +1804,9 @@ def render_fundamentals(analysis: StockAnalysis):
     # El agente fundamentals retorna estos campos en el JSON; los buscamos en report.raw_data
     # o si no, en key_metrics extras
     _render_insight_card("Tesis DCF", rd.get("dcf_thesis", ""),
-                         color="#00FF88", icon="💎")
+                         color="#3DD68C", icon="💎")
     _render_insight_card("Calidad de Earnings", rd.get("earnings_quality", ""),
-                         color="#4A9EFF", icon="✓")
+                         color="#6FA3E0", icon="✓")
 
     # ── Análisis completo ──
     _render_analysis_card(report, title="Análisis Fundamental Completo")
@@ -1463,7 +1824,7 @@ def render_future(analysis: StockAnalysis):
     rd  = report.raw_data or {}
 
     # ── Status pills: 4 dimensiones críticas del futuro ──
-    st.markdown('<div class="section-title-bar">🔭 Diagnóstico del Negocio Futuro</div>',
+    st.markdown('<div class="section-title-bar">Diagnóstico del Negocio Futuro</div>',
                 unsafe_allow_html=True)
 
     moat_str = (km.get("moat_strength") or "").lower()
@@ -1495,15 +1856,15 @@ def render_future(analysis: StockAnalysis):
     ])
 
     # ── Bar chart: 4 pilares del futuro ──
-    st.markdown('<div class="section-title-bar">⚡ Pilares de Viabilidad Futura</div>',
+    st.markdown('<div class="section-title-bar">Pilares de Viabilidad Futura</div>',
                 unsafe_allow_html=True)
 
     sub_items = []
     pillars = [
-        ("Calidad del Moat",     sub.get("moat_quality"),                 "#FFB84D"),
-        ("Runway de Crecimiento", sub.get("growth_runway"),               "#00FF88"),
-        ("Resistencia Disrupción", sub.get("disruption_resilience"),      "#4A9EFF"),
-        ("Capital Allocation",   sub.get("management_capital_allocation"), "#9B59FF"),
+        ("Calidad del Moat",     sub.get("moat_quality"),                 "#E2B25C"),
+        ("Runway de Crecimiento", sub.get("growth_runway"),               "#3DD68C"),
+        ("Resistencia Disrupción", sub.get("disruption_resilience"),      "#6FA3E0"),
+        ("Capital Allocation",   sub.get("management_capital_allocation"), "#9D8CE0"),
     ]
     for label, val, color in pillars:
         if val is not None:
@@ -1523,12 +1884,12 @@ def render_future(analysis: StockAnalysis):
 
     # ── Insight: Future Thesis ──
     _render_insight_card("Tesis a 5 años", rd.get("future_thesis", ""),
-                         color="#FFB84D", icon="🔭")
+                         color="#E2B25C", icon="🔭")
 
     # Key risks específicos (lista)
     key_risks = rd.get("key_risks") or []
     if key_risks and isinstance(key_risks, list):
-        st.markdown('<div class="section-title-bar">⚠️ Riesgos Críticos Identificados</div>',
+        st.markdown('<div class="section-title-bar">Riesgos Críticos Identificados</div>',
                     unsafe_allow_html=True)
         for r in key_risks:
             st.markdown(f'<div class="risk-item">{r}</div>', unsafe_allow_html=True)
@@ -1548,7 +1909,7 @@ def render_institutional(analysis: StockAnalysis):
     holders_raw = rd.get("holders_raw", {}) or {}
 
     # ── KPI tiles del Smart Money ──
-    st.markdown('<div class="section-title-bar">🏦 Indicadores Smart Money</div>',
+    st.markdown('<div class="section-title-bar">Indicadores Smart Money</div>',
                 unsafe_allow_html=True)
 
     inst_raw = km.get("institutional_ownership") or ""
@@ -1559,19 +1920,38 @@ def render_institutional(analysis: StockAnalysis):
     insider_level = "good" if "bullish" in insider_raw.lower() else "bad" if "bearish" in insider_raw.lower() else "neutral"
     squeeze_level = "good" if "high" in squeeze_raw.lower() else "neutral" if "medium" in squeeze_raw.lower() else "warn"
 
+    # Niveles/termómetros calculados desde el DATO real (numérico, agnóstico al
+    # idioma del enum). Propiedad institucional: sana entre 40-85%; >90% saturada.
+    inst_num = _safe_num(_extract_percent(inst_raw))
+    if inst_num is None:
+        inst_level, inst_meter = "neutral", None
+    elif 40 <= inst_num <= 85:
+        inst_level, inst_meter = "good", _meter_scale(inst_num, 20, 78)
+    elif inst_num > 85:
+        inst_level, inst_meter = "warn", 55.0
+    else:
+        inst_level, inst_meter = "neutral", _meter_scale(inst_num, 0, 80)
+    # Short interest: menos apuestas en contra = mejor (escala continua).
+    short_num = _safe_num(_extract_percent(short_raw))
+    short_level = ("neutral" if short_num is None else
+                   "good" if short_num < 3 else
+                   "neutral" if short_num < 8 else
+                   "warn" if short_num < 15 else "bad")
+    short_meter = _meter_scale(short_num, 0, 20, invert=True)
+
     _render_status_pills([
         {"label": "Propiedad Institucional",
          "value": _extract_percent(inst_raw),
-         "level": "good", "sub": "% del outstanding"},
+         "level": inst_level, "meter": inst_meter, "sub": "% del capital en fondos"},
         {"label": "Señal de Insiders",
          "value": _clean_tile_value(insider_raw, max_len=12),
          "level": insider_level, "sub": "Compras vs ventas"},
         {"label": "Short Interest",
          "value": _extract_percent(short_raw),
-         "level": "neutral", "sub": "% del float"},
+         "level": short_level, "meter": short_meter, "sub": "Apuestas a la baja"},
         {"label": "Potencial Squeeze",
          "value": _clean_tile_value(squeeze_raw, max_len=12),
-         "level": squeeze_level, "sub": "Short squeeze"},
+         "level": squeeze_level, "sub": "Rebote por cierre de cortos"},
     ])
 
     # ── Top holders bar chart ──
@@ -1581,10 +1961,82 @@ def render_institutional(analysis: StockAnalysis):
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
                         key=f"chart_inst_holders_{analysis.ticker}")
 
+    # ── Actividad reciente de directivos (Insiders) ─────────────────────────
+    # Si el análisis cacheado no trae las transacciones (se guardó antes de esta
+    # función, o los datos venían rate-limitados), las buscamos frescas
+    # (cacheadas 12h; con respaldo Nasdaq). Nunca sobrescribe datos buenos.
+    insider_txns = holders_raw.get("insider_transactions") or []
+    if not insider_txns:
+        try:
+            from data.market_data import get_holders_data
+            _fresh_h = get_holders_data(analysis.ticker) or {}
+            fresh_txns = _fresh_h.get("insider_transactions") or []
+            if fresh_txns:
+                insider_txns = fresh_txns
+                holders_raw = {**holders_raw,
+                               "insider_transactions": fresh_txns,
+                               "recent_insider_buys": _fresh_h.get("recent_insider_buys", 0),
+                               "recent_insider_sells": _fresh_h.get("recent_insider_sells", 0)}
+        except Exception:
+            insider_txns = []
+
+    if insider_txns:
+        n_buys = holders_raw.get("recent_insider_buys", 0) or 0
+        n_sells = holders_raw.get("recent_insider_sells", 0) or 0
+        st.markdown('<div class="section-title-bar">Actividad Reciente de Directivos (Insiders)</div>',
+                    unsafe_allow_html=True)
+        st.markdown(
+            f"<div style='margin:-4px 0 10px;color:#8D949E;font-size:0.85rem;'>"
+            f"En las últimas operaciones registradas: "
+            f"<span style='color:#3DD68C;font-weight:700;'>{n_buys} compras</span> · "
+            f"<span style='color:#F1495F;font-weight:700;'>{n_sells} ventas</span>. "
+            f"Las compras de directivos con su propio dinero suelen ser la señal más valiosa "
+            f"(arriesgan su patrimonio apostando a que la acción sube); las ventas casi siempre "
+            f"son por liquidez personal y pesan mucho menos.</div>",
+            unsafe_allow_html=True)
+
+        def _fmt_usd(v):
+            v = abs(float(v or 0))
+            if v >= 1e9: return f"${v/1e9:.1f}B"
+            if v >= 1e6: return f"${v/1e6:.1f}M"
+            if v >= 1e3: return f"${v/1e3:.0f}K"
+            return f"${v:.0f}" if v else "—"
+
+        # Priorizar operaciones con dinero real (las más grandes primero)
+        con_valor = [t for t in insider_txns if (t.get("value") or 0) > 0]
+        muestra = sorted(con_valor, key=lambda t: t.get("value") or 0, reverse=True)[:6] or insider_txns[:6]
+
+        tipo_color = {"compra": "#3DD68C", "venta": "#F1495F",
+                      "concesión": "#6FA3E0", "donación": "#9D8CE0", "otra": "#5E6570"}
+        rows = ""
+        for t in muestra:
+            c = tipo_color.get(t.get("type", "otra"), "#5E6570")
+            nombre = (t.get("insider") or "—").title()
+            rows += (
+                f"<tr>"
+                f"<td style='padding:7px 10px;color:#C9CDD3;font-size:0.82rem;'>{t.get('date','')}</td>"
+                f"<td style='padding:7px 10px;color:#F2F3F5;font-size:0.82rem;font-weight:600;'>{nombre}</td>"
+                f"<td style='padding:7px 10px;color:#8D949E;font-size:0.78rem;'>{t.get('position','')}</td>"
+                f"<td style='padding:7px 10px;'><span style='color:{c};font-weight:700;font-size:0.78rem;text-transform:uppercase;'>{t.get('type','')}</span></td>"
+                f"<td style='padding:7px 10px;text-align:right;color:#C9CDD3;font-size:0.82rem;font-family:JetBrains Mono,monospace;'>{_fmt_usd(t.get('value'))}</td>"
+                f"</tr>"
+            )
+        _th = ("padding:8px 10px;text-align:left;color:#5E6570;font-size:0.70rem;"
+               "text-transform:uppercase;letter-spacing:0.05em;")
+        st.markdown(
+            f"<div style='border:1px solid rgba(255,255,255,0.07);border-radius:12px;overflow:hidden;margin-bottom:14px;'>"
+            f"<table style='width:100%;border-collapse:collapse;'>"
+            f"<thead><tr style='background:rgba(255,255,255,0.03);'>"
+            f"<th style='{_th}'>Fecha</th><th style='{_th}'>Directivo</th>"
+            f"<th style='{_th}'>Cargo</th><th style='{_th}'>Operación</th>"
+            f"<th style='{_th}text-align:right;'>Monto</th>"
+            f"</tr></thead><tbody>{rows}</tbody></table></div>",
+            unsafe_allow_html=True)
+
     # ── Smart Money Signal pill grande ──
     smart_raw = km.get("smart_money_signal") or "neutral"
     smart_display = _translate_status(smart_raw).upper()
-    signal_color = "#00FF88" if "accumul" in smart_raw.lower() else "#FF3B5C" if "distribut" in smart_raw.lower() else "#4A9EFF"
+    signal_color = "#3DD68C" if "accumul" in smart_raw.lower() else "#F1495F" if "distribut" in smart_raw.lower() else "#6FA3E0"
     st.markdown(f"""
     <div class="insight-card" style="border-left-color:{signal_color};background:linear-gradient(135deg,{signal_color}11,{signal_color}03);">
         <div class="insight-card-header">
@@ -1600,7 +2052,7 @@ def render_institutional(analysis: StockAnalysis):
 
     # ── Key Insight ──
     _render_insight_card("Insight Clave del Flujo", rd.get("key_insight", ""),
-                         color="#9B59FF", icon="🎯")
+                         color="#9D8CE0", icon="🎯")
 
     _render_analysis_card(report, title="Análisis Completo de Flujo")
 
@@ -1620,7 +2072,7 @@ def render_catalysts(analysis: StockAnalysis):
     earnings = get_earnings_data(analysis.ticker) or {}
 
     # ── KPI tiles ──
-    st.markdown('<div class="section-title-bar">⚡ Catalizadores en el Horizonte</div>',
+    st.markdown('<div class="section-title-bar">Catalizadores en el Horizonte</div>',
                 unsafe_allow_html=True)
 
     next_earn = earnings.get("next_earnings", "") or km.get("next_earnings", "")
@@ -1629,13 +2081,13 @@ def render_catalysts(analysis: StockAnalysis):
         days_str = f"{days_to}d"
         next_tooltip = (f"Próximo reporte: {next_earn}. "
                         f"Earnings inminentes (<7d) son catalizador de alta volatilidad.")
-        next_color = "#FF3B5C" if days_to < 7 else "#FFB84D" if days_to < 30 else "#4A9EFF"
+        next_color = "#F1495F" if days_to < 7 else "#E2B25C" if days_to < 30 else "#6FA3E0"
     else:
         days_str = "N/D"
         next_tooltip = ("Fecha del próximo reporte de resultados no disponible en este momento "
                         "(la fuente de datos puede estar temporalmente fuera de servicio). "
                         "Intenta reanalizar en unos minutos.")
-        next_color = "#5A6878"
+        next_color = "#5E6570"
 
     def _looks_empty(v):
         """Detecta si un valor de tile está efectivamente vacío después de limpieza."""
@@ -1649,7 +2101,7 @@ def render_catalysts(analysis: StockAnalysis):
     if eh and beat_count is not None:
         beat_rate_str = f"{beat_count}/{len(eh)}"
         beat_tooltip = "Trimestres en los que la empresa superó el consenso de EPS en los últimos 8 trimestres."
-        beat_color = "#00FF88"
+        beat_color = "#3DD68C"
     else:
         raw = km.get("earnings_beat_rate", "")
         cleaned = _clean_tile_value(raw, max_len=10) if raw else None
@@ -1657,20 +2109,20 @@ def render_catalysts(analysis: StockAnalysis):
             beat_rate_str = "N/D"
             beat_tooltip = ("Historial de beats no disponible — requiere datos detallados de earnings "
                             "que la fuente puede no exponer para todos los tickers.")
-            beat_color = "#5A6878"
+            beat_color = "#5E6570"
         else:
             beat_rate_str = cleaned
             beat_tooltip = "Beat rate estimado por el agente de catalizadores."
-            beat_color = "#FFB84D"
+            beat_color = "#E2B25C"
 
     avg_surp = earnings.get("avg_surprise")
     if isinstance(avg_surp, (int, float)):
         avg_surp_str = f"{avg_surp:+.1f}%"
         avg_surp_tooltip = ("Promedio de % sorpresa en EPS sobre el consenso. "
                             "Positivo y sostenido indica momentum fundamental.")
-        avg_surp_color = ("#00FF88" if avg_surp > 5
-                          else "#FFB84D" if avg_surp > 0
-                          else "#FF3B5C")
+        avg_surp_color = ("#3DD68C" if avg_surp > 5
+                          else "#E2B25C" if avg_surp > 0
+                          else "#F1495F")
     else:
         raw = km.get("avg_earnings_surprise", "")
         extracted = _extract_percent(raw) if raw else None
@@ -1678,22 +2130,22 @@ def render_catalysts(analysis: StockAnalysis):
             avg_surp_str = "N/D"
             avg_surp_tooltip = ("Sorpresa promedio no disponible — requiere historial detallado "
                                 "de earnings que la fuente puede no exponer.")
-            avg_surp_color = "#5A6878"
+            avg_surp_color = "#5E6570"
         else:
             avg_surp_str = extracted
             avg_surp_tooltip = "Sorpresa promedio estimada por el agente de catalizadores."
-            avg_surp_color = "#FFB84D"
+            avg_surp_color = "#E2B25C"
 
     sentiment_raw = km.get("analyst_sentiment_trend") or "stable"
     sentiment_display = _clean_tile_value(sentiment_raw, max_len=12)
     sent_level_str = sentiment_raw.lower()
-    sent_color = ("#00FF88" if "improv" in sent_level_str else
-                  "#FF3B5C" if "deterior" in sent_level_str else "#FFB84D")
+    sent_color = ("#3DD68C" if "improv" in sent_level_str else
+                  "#F1495F" if "deterior" in sent_level_str else "#E2B25C")
 
     _render_metric_tiles([
-        {"icon": "📅", "label": "Próximo Earnings",
+        {"icon": "📅", "label": "Próximo Reporte",
          "value": days_str, "color": next_color, "tooltip": next_tooltip},
-        {"icon": "🎯", "label": "Beat Rate",
+        {"icon": "🎯", "label": "Tasa de Aciertos",
          "value": beat_rate_str, "color": beat_color, "tooltip": beat_tooltip},
         {"icon": "🚀", "label": "Sorpresa Promedio",
          "value": avg_surp_str, "color": avg_surp_color, "tooltip": avg_surp_tooltip},
@@ -1704,7 +2156,7 @@ def render_catalysts(analysis: StockAnalysis):
 
     # ── Historial de Earnings Surprises (bar chart) ──
     if eh and len(eh) >= 2:
-        st.markdown('<div class="section-title-bar">📈 Track Record de Earnings</div>',
+        st.markdown('<div class="section-title-bar">Track Record de Earnings</div>',
                     unsafe_allow_html=True)
         fig = build_earnings_history_chart(eh)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
@@ -1727,7 +2179,7 @@ def render_catalysts(analysis: StockAnalysis):
     key_event = km.get("key_upcoming_event", "")
     if key_event and key_event not in ("—", ""):
         _render_insight_card("Próximo Evento Crítico", str(key_event),
-                             color="#4A9EFF", icon="🔔")
+                             color="#6FA3E0", icon="🔔")
 
     # ── Pros / Cons ──
     _render_pros_cons(report,
@@ -1748,7 +2200,7 @@ def render_macro(analysis: StockAnalysis):
     rd = report.raw_data or {}
 
     # ── Status pills del entorno macro ──
-    st.markdown('<div class="section-title-bar">🌍 Diagnóstico Macro</div>',
+    st.markdown('<div class="section-title-bar">Diagnóstico Macro</div>',
                 unsafe_allow_html=True)
 
     env_raw = km.get("market_environment") or "neutral"
@@ -1784,14 +2236,14 @@ def render_macro(analysis: StockAnalysis):
     sector_perf = macro.get("sector_performance", {})
 
     if sector_perf:
-        st.markdown('<div class="section-title-bar">📊 Rotación Sectorial (1Y)</div>',
+        st.markdown('<div class="section-title-bar">Rotación Sectorial (1Y)</div>',
                     unsafe_allow_html=True)
         fig = build_sector_heatmap(sector_perf)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
                         key=f"chart_macro_sector_heatmap_{analysis.ticker}")
 
     # ── Snapshot de indicadores macro ──
-    st.markdown('<div class="section-title-bar">📡 Snapshot Macro</div>',
+    st.markdown('<div class="section-title-bar">Snapshot Macro</div>',
                 unsafe_allow_html=True)
     indicators_macro = [
         ("S&P 500",  macro.get("sp500", {}),  "index"),
@@ -1818,7 +2270,7 @@ def render_macro(analysis: StockAnalysis):
                 val_str = f"{curr:.2f}"
         else:
             val_str = "—"
-        color = "#00FF88" if chg >= 0 else "#FF3B5C"
+        color = "#3DD68C" if chg >= 0 else "#F1495F"
         arrow = "▲" if chg >= 0 else "▼"
         chg_str = f"{arrow} {abs(chg):.2f}% (1M)" if isinstance(curr, (int, float)) else "—"
         with cols[i]:
@@ -1837,7 +2289,7 @@ def render_macro(analysis: StockAnalysis):
 
     # ── Macro verdict ──
     _render_insight_card("Veredicto Macro", rd.get("macro_verdict", ""),
-                         color="#FFB84D", icon="🎯")
+                         color="#E2B25C", icon="🎯")
 
     _render_analysis_card(report, title="Análisis Macro Completo")
 
@@ -1888,7 +2340,7 @@ def render_sentiment(analysis: StockAnalysis):
              "sub": f"{rd.get('news_count', 0)} noticias"},
             {"label": "Señal Contraria",
              "value": _clean_tile_value(cont_raw, max_len=14),
-             "level": cont_level, "sub": "Buy fear / Sell hype"},
+             "level": cont_level, "sub": "Comprar miedo / Vender euforia"},
             {"label": "Riesgo Reputacional",
              "value": _clean_tile_value(rep_raw, max_len=10),
              "level": rep_level, "sub": "ESG / regulatorio"},
@@ -1896,12 +2348,12 @@ def render_sentiment(analysis: StockAnalysis):
 
     # ── Pros / Cons ──
     _render_pros_cons(report,
-                      pros_title="📈 Top 3 Señales Positivas",
+                      pros_title="📈 Top 3 Señales Positivas de Sentimiento",
                       cons_title="📉 Top 3 Riesgos de Narrativa")
 
     # ── Narrativa dominante ──
     _render_insight_card("Narrativa Dominante", rd.get("dominant_narrative", ""),
-                         color="#4A9EFF", icon="📖")
+                         color="#6FA3E0", icon="📖")
 
     # ── Oportunidad detectada (si hay divergencia) ──
     opportunity = rd.get("opportunity", "")
@@ -1930,7 +2382,7 @@ def render_risk(analysis: StockAnalysis):
     rd = report.raw_data or {}
 
     # ── KPI tiles de Riesgo ──
-    st.markdown('<div class="section-title-bar">⚖️ Métricas de Riesgo</div>',
+    st.markdown('<div class="section-title-bar">Métricas de Riesgo</div>',
                 unsafe_allow_html=True)
 
     vol      = _safe_num(km.get("volatility_atr_pct"))
@@ -1961,20 +2413,20 @@ def render_risk(analysis: StockAnalysis):
     _render_metric_tiles([
         {"icon": "💔", "label": "Pérdida Máxima",
          "value": f"-{downside:.1f}%" if downside is not None else "—",
-         "color": "#FF3B5C",
+         "color": "#F1495F",
          "tooltip": "Pérdida porcentual si el precio cae al nivel de protección desde el PRECIO ACTUAL del mercado."},
         {"icon": "🚀", "label": "Ganancia Potencial",
          "value": f"+{upside:.1f}%" if upside is not None else "—",
-         "color": "#00FF88",
+         "color": "#3DD68C",
          "tooltip": "Ganancia porcentual si el precio alcanza el target desde el PRECIO ACTUAL del mercado."},
         {"icon": "⚖️", "label": "R/R Ratio",
          "value": rr_clean,
-         "color": ("#00FF88" if (rr_num or 0) >= 3 else
-                   "#FFB84D" if (rr_num or 0) >= 2 else "#FF3B5C"),
+         "color": ("#3DD68C" if (rr_num or 0) >= 3 else
+                   "#E2B25C" if (rr_num or 0) >= 2 else "#F1495F"),
          "tooltip": "Risk/Reward Ratio calculado desde el precio actual. Mínimo aceptable 2:1, ideal 3:1 o superior."},
         {"icon": "📊", "label": "Volatilidad ATR",
          "value": f"{vol:.1f}%" if vol is not None else "—",
-         "color": "#4A9EFF" if (vol or 0) < 3 else "#FFB84D" if (vol or 0) < 5 else "#FF3B5C",
+         "color": "#6FA3E0" if (vol or 0) < 3 else "#E2B25C" if (vol or 0) < 5 else "#F1495F",
          "tooltip": "Average True Range como % del precio. >5% indica activo muy volátil con drawdowns frecuentes."},
     ])
 
@@ -1984,7 +2436,7 @@ def render_risk(analysis: StockAnalysis):
         info_live = get_company_info(analysis.ticker) or {}
         current_price = info_live.get("current_price") or analysis.entry_price
         if current_price:
-            st.markdown('<div class="section-title-bar">🎯 Upside / Downside vs Precio Actual</div>',
+            st.markdown('<div class="section-title-bar">Upside / Downside vs Precio Actual</div>',
                         unsafe_allow_html=True)
             fig = build_rr_chart(current_price, analysis.stop_loss,
                                  analysis.target_price, analysis.ticker)
@@ -1993,7 +2445,7 @@ def render_risk(analysis: StockAnalysis):
 
     # ── Pros / Cons ──
     _render_pros_cons(report,
-                      pros_title="✅ Top 3 Aspectos Favorables",
+                      pros_title="✅ Top 3 Aspectos Favorables del Riesgo",
                       cons_title="⚠️ Top 3 Riesgos Identificados")
 
     _render_analysis_card(report, title="Análisis Completo de Riesgo")
@@ -2016,7 +2468,7 @@ def render_agent_tab(analysis: StockAnalysis, agent_key: str):
         st.markdown(
             f'<div style="text-align:center;padding:16px;background:#0F1419;border:1px solid #1E2530;border-radius:8px;border-top:3px solid {color};">'
             f'<div style="font-family:JetBrains Mono;font-size:3rem;font-weight:700;color:{color};">{score:.0f}</div>'
-            f'<div style="font-size:0.7rem;color:#7A8898;text-transform:uppercase;letter-spacing:0.1em;">Score / 100</div>'
+            f'<div style="font-size:0.7rem;color:#8D949E;text-transform:uppercase;letter-spacing:0.1em;">Score / 100</div>'
             f'<div style="font-size:0.75rem;color:{color};margin-top:4px;">{report.conviction}</div>'
             f'</div>',
             unsafe_allow_html=True,
@@ -2030,7 +2482,7 @@ def render_agent_tab(analysis: StockAnalysis, agent_key: str):
                     bar_width = min(v / 34 * 100, 100)
                     st.markdown(
                         f'<div style="margin:4px 0;">'
-                        f'<div style="display:flex;justify-content:space-between;font-size:0.72rem;color:#7A8898;">'
+                        f'<div style="display:flex;justify-content:space-between;font-size:0.72rem;color:#8D949E;">'
                         f'<span>{k.replace("_", " ").title()}</span><span>{v:.0f}</span></div>'
                         f'<div style="background:#1A2030;border-radius:2px;height:4px;margin-top:2px;">'
                         f'<div style="background:{color};width:{bar_width}%;height:100%;border-radius:2px;"></div>'
@@ -2050,12 +2502,12 @@ def render_agent_tab(analysis: StockAnalysis, agent_key: str):
             if report.pros:
                 st.markdown("**Positivos**")
                 for p in report.pros[:3]:
-                    st.markdown(f'<div style="color:#00FF88;font-size:0.82rem;padding:2px 0;">✓ {p}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div style="color:#3DD68C;font-size:0.82rem;padding:2px 0;">✓ {p}</div>', unsafe_allow_html=True)
         with col_c:
             if report.cons:
                 st.markdown("**Riesgos / Negativos**")
                 for c in report.cons[:3]:
-                    st.markdown(f'<div style="color:#FF3B5C;font-size:0.82rem;padding:2px 0;">⚠ {c}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div style="color:#F1495F;font-size:0.82rem;padding:2px 0;">⚠ {c}</div>', unsafe_allow_html=True)
 
         # Key metrics
         if report.key_metrics:
@@ -2084,7 +2536,7 @@ def render_agent_tab(analysis: StockAnalysis, agent_key: str):
             label = key.replace("_", " ").title()
             st.markdown(
                 f'<div style="background:#141920;border:1px solid #2A3545;border-radius:4px;padding:10px;margin-top:8px;">'
-                f'<div style="font-size:0.7rem;color:#7A8898;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px;">{label}</div>'
+                f'<div style="font-size:0.7rem;color:#8D949E;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px;">{label}</div>'
                 f'<div style="font-size:0.85rem;color:#C8D0D8;line-height:1.6;">{val}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
@@ -2122,15 +2574,15 @@ def render_scan_results():
     if universe or err:
         # Mostrar SIEMPRE el diagnóstico para entender qué pasó
         if err:
-            color = "#FF3B5C"
+            color = "#F1495F"
             msg = f"❌ Error de TradingView: {err}"
         elif universe < 100:
-            color = "#FFB84D"
+            color = "#E2B25C"
             msg = (f"⚠️ TradingView devolvió solo <strong>{universe} acciones</strong> "
                    f"al universo crudo (esperábamos 1000+). De ellas, <strong>{passing}</strong> "
                    f"pasaron los filtros. Puede ser rate-limit transitorio — reintenta en 1-2 min.")
         else:
-            color = "#4A9EFF"
+            color = "#6FA3E0"
             msg = (f"✓ TradingView devolvió <strong>{universe} acciones</strong> al universo crudo. "
                    f"De ellas, <strong>{passing}</strong> pasaron los filtros del usuario.")
         st.markdown(
@@ -2162,26 +2614,26 @@ def render_scan_results():
 
     header_html = '<div style="display:grid;grid-template-columns:' + " ".join([f"{w}fr" for w in col_widths]) + ';gap:8px;padding:6px 8px;background:#141920;border-radius:4px;margin-bottom:4px;">'
     for h in headers:
-        header_html += f'<div style="font-size:0.65rem;color:#7A8898;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">{h}</div>'
+        header_html += f'<div style="font-size:0.65rem;color:#8D949E;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">{h}</div>'
     header_html += "</div>"
     st.markdown(header_html, unsafe_allow_html=True)
 
     for result in st.session_state.scan_results:
         color = score_color(result.screener_score)
-        stage_color = {"2": "#00FF88", "1": "#FFA500", "0": "#7A8898"}.get(str(result.stage), "#FF3B5C")
-        mom_color = "#00FF88" if result.momentum_6m > 0 else "#FF3B5C"
-        mom3_color = "#00FF88" if result.momentum_3m > 0 else "#FF3B5C"
+        stage_color = {"2": "#3DD68C", "1": "#C08E3B", "0": "#8D949E"}.get(str(result.stage), "#F1495F")
+        mom_color = "#3DD68C" if result.momentum_6m > 0 else "#F1495F"
+        mom3_color = "#3DD68C" if result.momentum_3m > 0 else "#F1495F"
 
         mktcap = f"${result.market_cap / 1e9:.1f}B" if result.market_cap > 0 else "N/A"
 
         row_html = f"""<div style="display:grid;grid-template-columns:{" ".join([f'{w}fr' for w in col_widths])};gap:8px;padding:8px 8px;border-bottom:1px solid #1A2030;align-items:center;">
             <div style="font-family:JetBrains Mono;font-size:0.85rem;font-weight:700;color:#E0E0E0;">{result.ticker}</div>
             <div style="font-size:0.78rem;color:#C8D0D8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{result.name[:25]}</div>
-            <div style="font-size:0.75rem;color:#7A8898;">{result.sector[:18]}</div>
+            <div style="font-size:0.75rem;color:#8D949E;">{result.sector[:18]}</div>
             <div style="font-family:JetBrains Mono;font-size:0.85rem;color:#E0E0E0;">${result.price:.2f}</div>
-            <div style="font-size:0.8rem;color:#7A8898;">{mktcap}</div>
+            <div style="font-size:0.8rem;color:#8D949E;">{mktcap}</div>
             <div style="font-family:JetBrains Mono;font-size:0.85rem;font-weight:700;color:{stage_color};">S{result.stage}</div>
-            <div style="font-family:JetBrains Mono;font-size:0.85rem;color:#9B59FF;">{result.rs_score:.0f}</div>
+            <div style="font-family:JetBrains Mono;font-size:0.85rem;color:#9D8CE0;">{result.rs_score:.0f}</div>
             <div style="font-family:JetBrains Mono;font-size:0.85rem;color:{mom_color};">{'+' if result.momentum_6m > 0 else ''}{result.momentum_6m:.1f}%</div>
             <div style="font-family:JetBrains Mono;font-size:0.85rem;color:{mom3_color};">{'+' if result.momentum_3m > 0 else ''}{result.momentum_3m:.1f}%</div>
             <div style="font-family:JetBrains Mono;font-size:0.9rem;font-weight:700;color:{color};">{result.screener_score:.0f}</div>
@@ -2211,14 +2663,14 @@ def render_scan_results():
 
 # Accent colors por categoría — cohesivos con la paleta del dashboard
 SCANNER_ACCENTS = {
-    "size":      "#FFB84D",   # naranja — tamaño / valor
-    "stage":     "#00FF88",   # verde — tendencia
-    "rs":        "#9B59FF",   # morado — fortaleza
-    "momentum":  "#4A9EFF",   # azul — momentum
+    "size":      "#E2B25C",   # naranja — tamaño / valor
+    "stage":     "#3DD68C",   # verde — tendencia
+    "rs":        "#9D8CE0",   # morado — fortaleza
+    "momentum":  "#6FA3E0",   # azul — momentum
     "proximity": "#00D4FF",   # cyan — máximo anual
     "sector":    "#E94B7B",   # rosa — sectores
     "liquidity": "#7BA8FF",   # azul claro — liquidez
-    "results":   "#FFD740",   # amarillo — cantidad
+    "results":   "#F0C878",   # amarillo — cantidad
 }
 
 
@@ -2251,6 +2703,21 @@ def _scanner_card_open(icon: str, title: str, subtitle: str, accent: str, toolti
 
 def _scanner_card_close():
     st.markdown('</div></div>', unsafe_allow_html=True)
+
+
+def _scanner_group_head(step: str, title: str, subtitle: str):
+    """Encabezado de un bloque de criterios del scanner (agrupa varias cards
+    bajo una misma idea: qué buscar / cómo se comporta / qué ver)."""
+    st.markdown(f"""
+    <div class="scanner-group-head">
+        <span class="scanner-group-step">{step}</span>
+        <div class="scanner-group-titles">
+            <div class="scanner-group-title">{title}</div>
+            <div class="scanner-group-subtitle">{subtitle}</div>
+        </div>
+        <span class="scanner-group-rule"></span>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def render_scanner_config():
@@ -2299,6 +2766,15 @@ def render_scanner_config():
             st.rerun()
 
     st.markdown('<div class="scanner-section-divider"></div>', unsafe_allow_html=True)
+
+    # ════════════════════════════════════════════════════════════════════
+    # BLOQUE 1 — QUÉ EMPRESAS BUSCAR (universo de partida)
+    #   Sectores (tarjetón principal) + Tamaño + Liquidez
+    # ════════════════════════════════════════════════════════════════════
+    _scanner_group_head(
+        "1", "Qué empresas buscar",
+        "El universo de partida: en qué sectores, de qué tamaño y con cuánto movimiento diario",
+    )
 
     # ════════════════════════════════════════════════════════════════════
     # FILTRO PRINCIPAL: Sectores de interés (tarjetón full-width)
@@ -2350,11 +2826,13 @@ def render_scanner_config():
                         sf["sectors"] = current
                         st.rerun()
 
-    # ── GRID de filtros secundarios (2 columnas) ──
-    col_l, col_r = st.columns(2, gap="medium")
+    # ── Bloque 1, fila de apoyo: Tamaño | Liquidez ──
+    # Cada fila abre sus PROPIAS columnas para que ambas tarjetas queden
+    # perfectamente alineadas entre sí (con dos columnas largas se desfasaban).
+    b1_l, b1_r = st.columns(2, gap="medium")
 
-    # 1. Tamaño de la empresa (multi-select) — IZQ
-    with col_l:
+    # Tamaño de la empresa (multi-select) — IZQ
+    with b1_l:
         _scanner_card_open(
             "🏢", "Tamaño de la empresa", "Capitalización de mercado",
             SCANNER_ACCENTS["size"],
@@ -2374,8 +2852,36 @@ def render_scanner_config():
                     st.rerun()
         _scanner_card_close()
 
-    # 2. Tendencia técnica (multi-select) — DER
-    with col_r:
+    # Liquidez mínima (single) — DER
+    with b1_r:
+        _scanner_card_open(
+            "💧", "Liquidez mínima", "Volumen promedio diario",
+            SCANNER_ACCENTS["liquidity"],
+            tooltip="Cuántas acciones se negocian al día en promedio. Alta liquidez = más fácil entrar y salir sin afectar el precio."
+        )
+        liq_cols = st.columns(len(LIQUIDITY_OPTIONS))
+        for i, opt in enumerate(LIQUIDITY_OPTIONS):
+            with liq_cols[i]:
+                active = sf.get("liquidity") == opt["key"]
+                if _scanner_pill(opt["label"], f"liq_{opt['key']}", active, sub=opt["sub"]):
+                    sf["liquidity"] = opt["key"]
+                    st.rerun()
+        _scanner_card_close()
+
+    # ════════════════════════════════════════════════════════════════════
+    # BLOQUE 2 — CÓMO SE ESTÁ COMPORTANDO (lectura del precio)
+    #   Tendencia + Fortaleza relativa + Momentum + Cercanía al máximo
+    # ════════════════════════════════════════════════════════════════════
+    _scanner_group_head(
+        "2", "Cómo se está comportando",
+        "La lectura del precio: en qué fase está, si lidera al mercado y cuánta inercia lleva",
+    )
+
+    # ── Bloque 2, fila 1: Tendencia | Fortaleza vs el mercado ──
+    b2_l, b2_r = st.columns(2, gap="medium")
+
+    # Tendencia técnica (multi-select) — IZQ
+    with b2_l:
         _scanner_card_open(
             "📈", "Tendencia técnica", "Stage Analysis (Minervini)",
             SCANNER_ACCENTS["stage"],
@@ -2395,8 +2901,8 @@ def render_scanner_config():
                     st.rerun()
         _scanner_card_close()
 
-    # 3. Fortaleza vs el mercado (single) — IZQ
-    with col_l:
+    # Fortaleza vs el mercado (single) — DER
+    with b2_r:
         _scanner_card_open(
             "💪", "Fortaleza vs el mercado", "Relative Strength vs S&P 500",
             SCANNER_ACCENTS["rs"],
@@ -2411,8 +2917,11 @@ def render_scanner_config():
                     st.rerun()
         _scanner_card_close()
 
-    # 4. Momentum reciente (single) — DER
-    with col_r:
+    # ── Bloque 2, fila 2: Momentum | Cercanía al máximo ──
+    b2b_l, b2b_r = st.columns(2, gap="medium")
+
+    # Momentum reciente (single) — IZQ
+    with b2b_l:
         _scanner_card_open(
             "🚀", "Momentum reciente", "Retorno últimos 6 meses",
             SCANNER_ACCENTS["momentum"],
@@ -2427,8 +2936,8 @@ def render_scanner_config():
                     st.rerun()
         _scanner_card_close()
 
-    # 5. Cercanía al máximo anual (single) — IZQ
-    with col_l:
+    # Cercanía al máximo anual (single) — DER
+    with b2b_r:
         _scanner_card_open(
             "🏔️", "Cercanía al máximo anual", "Distancia al 52W High",
             SCANNER_ACCENTS["proximity"],
@@ -2443,26 +2952,20 @@ def render_scanner_config():
                     st.rerun()
         _scanner_card_close()
 
-    # NOTE: Sectores movido al filtro principal arriba (full-width destacado).
+    # NOTE: Sectores está arriba, en el bloque 1 (tarjetón full-width).
+    #       Liquidez está arriba, junto a Tamaño (ambos definen el universo).
 
-    # 7. Liquidez mínima (single) — IZQ
-    with col_l:
-        _scanner_card_open(
-            "💧", "Liquidez mínima", "Volumen promedio diario",
-            SCANNER_ACCENTS["liquidity"],
-            tooltip="Cuántas acciones se negocian al día en promedio. Alta liquidez = más fácil entrar y salir sin afectar el precio."
-        )
-        liq_cols = st.columns(len(LIQUIDITY_OPTIONS))
-        for i, opt in enumerate(LIQUIDITY_OPTIONS):
-            with liq_cols[i]:
-                active = sf.get("liquidity") == opt["key"]
-                if _scanner_pill(opt["label"], f"liq_{opt['key']}", active, sub=opt["sub"]):
-                    sf["liquidity"] = opt["key"]
-                    st.rerun()
-        _scanner_card_close()
+    # ════════════════════════════════════════════════════════════════════
+    # BLOQUE 3 — QUÉ QUIERES VER (ajuste de salida)
+    # ════════════════════════════════════════════════════════════════════
+    _scanner_group_head(
+        "3", "Qué quieres ver",
+        "Cuántas acciones mostrar al final, ordenadas de mejor a peor puntaje",
+    )
 
-    # 8. Cantidad de resultados (single) — DER
-    with col_r:
+    # Cantidad de resultados (single) — centrada, media anchura
+    _sp_res_l, res_col, _sp_res_r = st.columns([1, 2, 1], gap="medium")
+    with res_col:
         _scanner_card_open(
             "📋", "Cantidad de resultados", "Top N por puntaje del screener",
             SCANNER_ACCENTS["results"],
@@ -2548,7 +3051,7 @@ def render_quick_view(ticker: str):
         year_change = (latest - year_start) / year_start * 100 if year_start else 0
 
     # ── Header con precio + cambio día ───────────────────────────────
-    day_color = "#00FF88" if day_change >= 0 else "#FF3B5C"
+    day_color = "#3DD68C" if day_change >= 0 else "#F1495F"
     arrow = "▲" if day_change >= 0 else "▼"
 
     col_back, col_spacer = st.columns([1, 5])
@@ -2606,13 +3109,13 @@ def render_quick_view(ticker: str):
         div_str = f"{div_yield:.2f}%" if div_yield > 0 else "—"
 
         metrics = [
-            ("Market Cap",   mcap_str,   "#FFB84D"),
-            ("P/E Trailing", pe_str,     "#4A9EFF"),
-            ("P/E Forward",  fwd_pe_str, "#4A9EFF"),
-            ("P/S",          ps_str,     "#9B59FF"),
-            ("Vol Promedio", vol_str,    "#FFB84D"),
-            ("Beta",         beta_str,   "#9B59FF"),
-            ("Div Yield",    div_str,    "#00FF88"),
+            ("Market Cap",   mcap_str,   "#E2B25C"),
+            ("P/E Trailing", pe_str,     "#6FA3E0"),
+            ("P/E Forward",  fwd_pe_str, "#6FA3E0"),
+            ("P/S",          ps_str,     "#9D8CE0"),
+            ("Vol Promedio", vol_str,    "#E2B25C"),
+            ("Beta",         beta_str,   "#9D8CE0"),
+            ("Div Yield",    div_str,    "#3DD68C"),
         ]
         for label, val, color in metrics:
             st.markdown(f"""
@@ -2639,7 +3142,7 @@ def render_quick_view(ticker: str):
     for i, (label, val, suffix) in enumerate(perf_data):
         with perf_cols[i]:
             if label == "52W Range":
-                color = "#FFB84D" if 20 < val < 80 else ("#00FF88" if val >= 80 else "#FF3B5C")
+                color = "#E2B25C" if 20 < val < 80 else ("#3DD68C" if val >= 80 else "#F1495F")
                 val_str = f"{val:.0f}%"
             elif label == "52W H/L":
                 color = "#C8D0D8"
@@ -2648,7 +3151,7 @@ def render_quick_view(ticker: str):
                 color = "#C8D0D8"
                 val_str = "—"
             else:
-                color = "#00FF88" if val >= 0 else "#FF3B5C"
+                color = "#3DD68C" if val >= 0 else "#F1495F"
                 ar = "▲" if val >= 0 else "▼"
                 val_str = f"{ar} {abs(val):.1f}%"
 
@@ -2838,7 +3341,7 @@ def render_welcome():
                 price = data.get("price")
                 change = data.get("change_pct", 0) or 0
 
-                change_color = "#00FF88" if change >= 0 else "#FF3B5C"
+                change_color = "#3DD68C" if change >= 0 else "#F1495F"
                 arrow = "▲" if change >= 0 else "▼"
                 price_str = f"${price:.2f}" if price else "—"
                 change_str = f"{arrow} {abs(change):.2f}%" if price else "—"
@@ -2924,7 +3427,7 @@ def render_welcome():
             data = {}
         curr = data.get("current")
         chg = data.get("1m_change", 0) or 0
-        change_color = "#00FF88" if chg >= 0 else "#FF3B5C"
+        change_color = "#3DD68C" if chg >= 0 else "#F1495F"
         change_symbol = "▲" if chg >= 0 else "▼"
 
         val_str = _format_pulse(curr, fmt)
@@ -2968,11 +3471,18 @@ def render_welcome():
 
 # ── Main App ──────────────────────────────────────────────────────────────
 def main():
+    # Barra lateral persistente: Home + historial (últimos 10 análisis + 3
+    # escaneos). Se renderiza SIEMPRE; su contenido viene de sesión/disco/nube,
+    # así que sobrevive a reinicios. _apply_sidebar_collapse solo la oculta si
+    # el usuario la minimizó (no afecta datos ni flujos).
+    render_sidebar()
+    _apply_sidebar_collapse()
+
     render_header()
 
-    # En lugar del sidebar lateral, mostramos un botón "Volver al Home"
-    # centrado arriba SOLO cuando el usuario no está en la welcome screen.
-    # En welcome ya hay un hero claro — no se necesita botón redundante.
+    # Botón "Volver al Home" centrado arriba SOLO cuando el usuario no está en
+    # la welcome screen NI viendo un análisis (ese ya trae su propia franja de
+    # navegación). En welcome el hero es claro; no se necesita botón redundante.
     in_welcome = (
         not st.session_state.get("selected_ticker") and
         not st.session_state.get("quick_view_ticker") and
@@ -2980,7 +3490,10 @@ def main():
         not st.session_state.get("scanner_config_open") and
         not st.session_state.get("_show_scan_results")
     )
-    if not in_welcome:
+    has_selected_analysis = (
+        st.session_state.get("selected_ticker") in (st.session_state.get("analyses") or {})
+    )
+    if (not in_welcome) and (not has_selected_analysis):
         render_top_nav()
 
     selected = st.session_state.selected_ticker
@@ -3039,8 +3552,8 @@ def main():
         f'<span class="stock-header-name">{analysis.company_name}</span>'
         f'<span>{rec_badge}</span>'
         f'{compound_badge}'
-        f'<span class="stock-header-score" style="color:{color};">{score:.1f}<span style="font-size:0.75rem;color:#7A8898;font-weight:400;">/100</span></span>'
-        f'<span style="color:#5A6878;font-family:JetBrains Mono;font-size:0.7rem;">{analysis.timestamp[:10]}</span>'
+        f'<span class="stock-header-score" style="color:{color};">{score:.1f}<span style="font-size:0.75rem;color:#8D949E;font-weight:400;">/100</span></span>'
+        f'<span style="color:#5E6570;font-family:JetBrains Mono;font-size:0.7rem;">{analysis.timestamp[:10]}</span>'
         f'</div>',
         unsafe_allow_html=True,
     )
