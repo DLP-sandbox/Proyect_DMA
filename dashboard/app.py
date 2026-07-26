@@ -307,11 +307,67 @@ def inject_protection():
             removeByText(root);
         }
 
+        // ── Auto-ajuste del VALOR de las tarjetas ────────────────────────
+        // El valor debe leerse COMPLETO y en UNA sola línea. Si el texto es
+        // largo ("deteriorándose", "incertidumbre") no cabe al ancho de la
+        // tarjeta, así que le bajamos la fuente hasta que quepa. Se mide el
+        // ancho REAL del elemento, con lo que funciona igual en escritorio y
+        // en el iframe estrecho de Whop.
+        //
+        // Guardas: acotado a esas 2 clases; `data-fit` recuerda TEXTO + ANCHO ya
+        // ajustados para no re-medir en cada barrido (sin parpadeo ni bucles).
+        // El ancho forma parte de la clave a propósito: si solo se guardara el
+        // texto, al estrechar la ventana el texto seguiría siendo el mismo y la
+        // tarjeta nunca se recalcularía (se quedaría desbordada). Con el ancho
+        // dentro, cualquier cambio de tamaño dispara un nuevo ajuste — y como se
+        // parte de fontSize='' también vuelve a crecer al ensanchar.
+        // Hay además un mínimo de fuente para que nunca quede ilegible.
+        var FIT_SELECTOR = '.status-pill-value, .kpi-tile-value';
+        // Suelo de 7px: medido en el peor caso real (ventana de ~900px, donde la
+        // fila de 4 tarjetas deja pills de solo ~96px y una palabra como
+        // "Contrayendo" no entra ni a 9px). Sigue siendo legible y es preferible
+        // a partir la palabra en dos o recortarla.
+        var FIT_MIN_PX = 7;
+
+        function fitText(root) {
+            if (!root) return;
+            try {
+                var nodes = root.querySelectorAll(FIT_SELECTOR);
+                for (var i = 0; i < nodes.length; i++) {
+                    var el = nodes[i];
+                    try {
+                        // Ancho 0 = aún no visible (pestaña oculta): se ajustará
+                        // cuando se muestre, en un barrido posterior.
+                        if (!el.clientWidth) continue;
+                        var key = (el.textContent || '') + '|' + el.clientWidth;
+                        if (el.getAttribute('data-fit') === key) continue;
+                        // OJO: el tamaño se aplica con prioridad `important`.
+                        // Las media queries de estrecho declaran
+                        // `.status-pill-value { font-size: ... !important }`, que
+                        // GANA a un style inline normal: sin `important` aquí el
+                        // ajuste se calculaba pero no se veía (el texto seguía
+                        // desbordado justo en los anchos donde más falta hace).
+                        el.style.removeProperty('font-size');   // partir del CSS
+                        var size = parseFloat(window.getComputedStyle(el).fontSize);
+                        var guard = 0;
+                        while (el.scrollWidth > el.clientWidth + 1 &&
+                               size > FIT_MIN_PX && guard++ < 60) {
+                            size -= 0.5;
+                            el.style.setProperty('font-size', size + 'px', 'important');
+                        }
+                        el.setAttribute('data-fit', key);
+                    } catch (e) {}
+                }
+            } catch (e) {}
+        }
+
         // Nukear en todos los documentos accesibles: el propio y window.top
         function nukeEverywhere() {
             nukeBranding(doc);
             try { if (window.top && window.top.document) nukeBranding(window.top.document); } catch (e) {}
             try { if (window.parent && window.parent.document) nukeBranding(window.parent.document); } catch (e) {}
+            // El contenido de la app vive en el documento padre, no en este iframe.
+            try { if (window.parent && window.parent.document) fitText(window.parent.document); } catch (e) {}
         }
 
         nukeEverywhere();
@@ -1142,7 +1198,11 @@ def _translate_status(text):
 
 
 def _clean_tile_value(value, max_len=22):
-    """Limpia valor para tile: quita paréntesis, descripciones largas, traduce y trunca."""
+    """Limpia el valor de una tarjeta: quita paréntesis y descripciones largas,
+    y lo traduce. YA NO trunca con "…": el valor llega COMPLETO al DOM y, si no
+    cabe de ancho, fitText() le baja el tamaño de fuente para que se lea entero
+    en una sola línea. `max_len` se mantiene en la firma porque los llamadores
+    lo siguen pasando, pero ya no recorta nada."""
     if value is None or value == "":
         return "—"
     s = str(value).strip()
@@ -1157,9 +1217,6 @@ def _clean_tile_value(value, max_len=22):
         return "—"
     # Traduce términos comunes
     s = _translate_status(s)
-    # Trunca con ellipsis
-    if len(s) > max_len:
-        s = s[:max_len].rstrip() + "…"
     return s
 
 
@@ -2461,25 +2518,66 @@ def render_sentiment(analysis: StockAnalysis):
         rep_level = ("good" if "low" in rep_raw.lower() else
                      "bad" if "high" in rep_raw.lower() else "warn")
 
-        _render_status_pills([
+        # ── Descripciones derivadas del estado REAL ──────────────────
+        # Frases completas en vez de etiquetas sueltas ("Mejorando o
+        # deteriorando"): dicen lo que de verdad está pasando con esta acción.
+        _mom = mom_raw.lower()
+        if "improv" in _mom or "mejor" in _mom:
+            mom_sub = "El tono de las noticias mejora y empieza a acompañar al precio."
+        elif "deterior" in _mom or "empeor" in _mom:
+            mom_sub = "El tono de las noticias empeora; la narrativa juega en contra a corto plazo."
+        else:
+            mom_sub = "El tono de las noticias se mantiene estable, sin giros recientes."
+
+        _n_news = rd.get("news_count", 0) or 0
+        _tema = _clean_tile_value(narr_raw)
+        if _tema and _tema != "—":
+            narr_sub = (f"El foco de las {_n_news} noticias recientes está en {_tema.lower()}."
+                        if _n_news else f"La narrativa dominante gira en torno a {_tema.lower()}.")
+        else:
+            narr_sub = (f"{_n_news} noticias recientes, sin un tema dominante claro."
+                        if _n_news else "Sin noticias recientes que marquen una narrativa.")
+
+        _cont = cont_raw.lower()
+        if "buy the fear" in _cont or "miedo" in _cont:
+            cont_sub = "Miedo extremo: el pesimismo parece exagerado y suele preceder rebotes."
+        elif "sell the hype" in _cont or "euforia" in _cont:
+            cont_sub = "Euforia extrema: el optimismo ya está en el precio, conviene cautela."
+        else:
+            cont_sub = "Sin extremos de miedo ni euforia: el sentimiento no da señal contraria."
+
+        _rep = rep_raw.lower()
+        if "low" in _rep or "bajo" in _rep:
+            rep_sub = "Riesgo ESG y regulatorio bajo: sin frentes abiertos que amenacen la marca."
+        elif "high" in _rep or "alto" in _rep:
+            rep_sub = "Riesgo alto: hay frentes ESG o regulatorios que pueden dañar la valoración."
+        else:
+            rep_sub = "Riesgo moderado: conviene vigilar los frentes ESG y regulatorios abiertos."
+
+        _sent_pills = [
             {"label": "Momentum Sentimiento",
              "value": _clean_tile_value(mom_raw, max_len=14),
-             "level": mom_level, "sub": "Mejorando o deteriorando",
+             "level": mom_level, "sub": mom_sub,
          "tooltip": "Dirección en la que se mueve la percepción del mercado sobre la empresa en las últimas semanas: si la narrativa está mejorando o deteriorándose."},
             {"label": "Tema Narrativo",
              "value": _clean_tile_value(narr_raw, max_len=14),
              "level": "neutral",
-             "sub": f"{rd.get('news_count', 0)} noticias",
+             "sub": narr_sub,
          "tooltip": "Historia dominante que se cuenta hoy sobre la empresa en noticias y análisis. La narrativa mueve el precio a corto plazo aunque los fundamentales no hayan cambiado."},
             {"label": "Señal Contraria",
              "value": _clean_tile_value(cont_raw, max_len=14),
-             "level": cont_level, "sub": "Comprar miedo / Vender euforia",
+             "level": cont_level, "sub": cont_sub,
          "tooltip": "Lectura a contracorriente del sentimiento. Comprar el miedo: el pesimismo es exagerado y crea oportunidad. Vender la euforia: el optimismo ya está descontado en el precio y queda poco recorrido."},
             {"label": "Riesgo Reputacional",
              "value": _clean_tile_value(rep_raw, max_len=10),
-             "level": rep_level, "sub": "ESG / regulatorio",
+             "level": rep_level, "sub": rep_sub,
          "tooltip": "Exposición a escándalos, litigios, sanciones regulatorias o problemas ESG que puedan dañar la marca y, con ella, la valoración de la empresa."},
-        ])
+        ]
+        # 2×2 en vez de una fila de cuatro: cada llamada abre sus propias
+        # columnas, así cada tarjeta ocupa la MITAD de esta columna (el doble de
+        # ancho que antes) y las frases de arriba caben cómodas.
+        _render_status_pills(_sent_pills[:2])
+        _render_status_pills(_sent_pills[2:])
 
     # ── Pros / Cons ──
     _render_pros_cons(report,

@@ -1372,12 +1372,11 @@ hr {
     line-height: 1.15;
     letter-spacing: -0.01em;
     font-variant-numeric: tabular-nums;
-    word-break: break-word;
+    /* Igual que .status-pill-value: una sola línea, texto completo, y si no
+       cabe lo encoge fitText() en vez de partirlo o truncarlo. */
+    white-space: nowrap;
     overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    max-height: 3.2rem;
+    text-overflow: clip;
 }
 
 /* ── Tooltip (?) icon con popup al hover ─────────────────── */
@@ -1772,21 +1771,26 @@ hr {
     letter-spacing: -0.01em;
     font-variant-numeric: tabular-nums;
     color: var(--text-hi);
-    word-break: break-word;
+    /* SIEMPRE en una sola línea y completo: nada de partir la palabra en dos
+       ni recortarla con "…". Si no cabe, el auto-ajuste de fitText() (app.py)
+       baja el tamaño de fuente hasta que quepa. Con una única línea, además,
+       todas las tarjetas de una fila quedan a la misma altura. */
+    white-space: nowrap;
     overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    max-height: 2.7rem;
+    text-overflow: clip;
 }
 
 .status-pill-sub {
     font-family: var(--font-ui);
     font-size: 0.68rem;
     color: var(--text-3);
+    /* La descripción sí puede ocupar 2 líneas: antes iba en `nowrap` y se
+       cortaba con "…" en cuanto la frase pasaba de unas pocas palabras. */
+    line-height: 1.35;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
 }
 
 /* ── Insight card: panel sereno con barra fina de acento ── */
