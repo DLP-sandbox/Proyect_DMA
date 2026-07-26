@@ -1447,6 +1447,29 @@ def render_overview(analysis: StockAnalysis):
         # analysis.vetos_applied sigue existiendo internamente para el scoring,
         # solo se quitó su visualización). ─────────────────────────
 
+        # ── Upside/Downside, DEBAJO de los datos clave ────────────
+        # Vive en esta columna (y no a lo ancho, como antes) para aprovechar el
+        # hueco que quedaba libre bajo las métricas. Va en versión `compact` para
+        # que quepa en la columna estrecha; el ancho lo resuelve
+        # use_container_width y el eje de precio se autoescala a target/stop.
+        from data.market_data import get_company_info as _gci, get_risk_levels as _grl
+        _ov_info   = _gci(analysis.ticker) or {}
+        _ov_price  = _safe_num(_ov_info.get("current_price")) or _safe_num(analysis.entry_price)
+        _ov_stop   = _safe_num(analysis.stop_loss)
+        _ov_target = _safe_num(analysis.target_price) or _safe_num(_ov_info.get("target_price"))
+        # Respaldo infalible si faltan niveles (análisis cacheado con datos bloqueados)
+        if _ov_stop is None or _ov_target is None or _ov_price is None:
+            _fr = _grl(analysis.ticker)
+            if _fr:
+                _ov_price  = _ov_price  or _fr.get("current_price")
+                _ov_stop   = _ov_stop   or _fr.get("stop")
+                _ov_target = _ov_target or _fr.get("target")
+        if _ov_price and _ov_stop and _ov_target:
+            _chart(build_rr_chart(_ov_price, _ov_stop, _ov_target,
+                                  analysis.ticker, compact=True),
+                   use_container_width=True,
+                   key=f"chart_overview_rr_{analysis.ticker}")
+
     with col_thesis:
         st.markdown("#### Tesis de Inversión — Orquestador")
         st.markdown(
@@ -1511,24 +1534,8 @@ def render_overview(analysis: StockAnalysis):
             </div>
             """, unsafe_allow_html=True)
 
-    # Risk/Reward visual — usando PRECIO ACTUAL de yfinance como referencia
-    from data.market_data import get_company_info, get_risk_levels
-    info_live = get_company_info(analysis.ticker) or {}
-    _ov_price  = _safe_num(info_live.get("current_price")) or _safe_num(analysis.entry_price)
-    _ov_stop   = _safe_num(analysis.stop_loss)
-    _ov_target = _safe_num(analysis.target_price)
-    # Respaldo infalible si faltan niveles (análisis cacheado con datos bloqueados)
-    if _ov_stop is None or _ov_target is None or _ov_price is None:
-        _fr = get_risk_levels(analysis.ticker)
-        if _fr:
-            _ov_price  = _ov_price  or _fr.get("current_price")
-            _ov_stop   = _ov_stop   or _fr.get("stop")
-            _ov_target = _ov_target or _fr.get("target")
-    if _ov_price and _ov_stop and _ov_target:
-        st.markdown("---")
-        fig = build_rr_chart(_ov_price, _ov_stop, _ov_target, analysis.ticker)
-        _chart(fig, use_container_width=True,
-                        key=f"chart_overview_rr_{analysis.ticker}")
+    # (La gráfica Upside/Downside se dibuja arriba, al final de `col_info`,
+    # justo debajo de los datos clave.)
 
 
 # ── Technical Tab ─────────────────────────────────────────────────────────

@@ -1143,8 +1143,13 @@ def build_quick_chart(df: pd.DataFrame, ticker: str, period_days: int = 126) -> 
 
 # ── Risk/Reward Visual ────────────────────────────────────────────────────
 
-def build_rr_chart(current_price: float, stop: float, target: float, ticker: str) -> go.Figure:
-    """Visualización del Upside/Downside calculado desde el PRECIO ACTUAL hasta target/stop."""
+def build_rr_chart(current_price: float, stop: float, target: float, ticker: str,
+                   compact: bool = False) -> go.Figure:
+    """Visualización del Upside/Downside calculado desde el PRECIO ACTUAL hasta target/stop.
+
+    compact=True → versión más baja y con tipografía menor, para que quepa en la
+    columna estrecha del Overview sin perder legibilidad. Por defecto (False) el
+    resultado es el de siempre, así la pestaña de Riesgo no cambia."""
     # Guarda robusta: rechaza None, NaN, infinito y no-positivos (un `all([...])`
     # a secas NO detecta NaN, que es "truthy" → antes esto rompía la gráfica y
     # el rango del eje con nan en producción).
@@ -1165,12 +1170,25 @@ def build_rr_chart(current_price: float, stop: float, target: float, ticker: str
     fig = go.Figure()
 
     # ── Escalera de precios ───────────────────────────────────────────────
-    # La BANDA de color ocupa solo la mitad izquierda y las etiquetas viven en
-    # la derecha: así el texto nunca se pisa con las zonas ni entre sí (antes
-    # los tres rótulos iban apilados arriba a la izquierda y colisionaban).
-    BAND_X0, BAND_X1 = 0.05, 0.46      # ancho de la banda de precio
-    LABEL_X = 0.52                      # columna de etiquetas, a su derecha
+    # Los EXTREMOS (target arriba y protección abajo) van SIEMPRE en la columna
+    # IZQUIERDA y el PRECIO ACTUAL en la DERECHA. Al vivir en lados opuestos no
+    # pueden solaparse nunca, ni cuando el precio actual queda pegadísimo a uno
+    # de los dos extremos (antes los tres rótulos compartían columna y en ese
+    # caso se mezclaban y no se podían leer).
+    LEFT_X  = 0.27                      # borde DERECHO de las etiquetas de extremos
+    BAND_X0, BAND_X1 = 0.30, 0.62       # banda de precio, en el centro
+    # En compacto la etiqueta de la derecha arranca antes y se acorta: con el
+    # ancho de la columna del Overview, "PRECIO ACTUAL $82.25" no cabía entero
+    # y se recortaba contra el borde (se perdían los céntimos).
+    RIGHT_X = 0.58 if compact else 0.65  # borde IZQUIERDO de la etiqueta de precio actual
+    CURRENT_NAME = "ACTUAL" if compact else "PRECIO ACTUAL"
     PCT_X = (BAND_X0 + BAND_X1) / 2     # los % van centrados dentro de la banda
+    # `compact` = la versión que cabe en la columna estrecha del Overview:
+    # menos alto y tipografía más pequeña, mismo layout y misma información.
+    lbl_size  = 9 if compact else 11
+    pct_size  = 15 if compact else 19
+    fig_h     = 250 if compact else 330
+    tick_size = 8 if compact else 9
 
     # Zonas: su ALTURA es el hueco de precio real, así que la mayor se ve al
     # instante sin tener que leer los números.
@@ -1181,32 +1199,44 @@ def build_rr_chart(current_price: float, stop: float, target: float, ticker: str
         fig.add_shape(type="rect", xref="paper", x0=BAND_X0, x1=BAND_X1,
                       y0=y0, y1=y1, fillcolor=fill, line=dict(width=0), layer="below")
 
-    # Niveles: línea corta dentro de la banda + etiqueta a la derecha, cada una
-    # a la altura de SU precio (no pueden solaparse entre ellas).
-    for price, color, name, dash in [
-        (target,        GREEN,  "TARGET",        "dash"),
-        (current_price, ORANGE, "PRECIO ACTUAL", "solid"),
-        (stop,          RED,    "PROTECCIÓN",    "dash"),
+    # Niveles: línea corta dentro de la banda + etiqueta en SU columna, a la
+    # altura de su propio precio.
+    for price, color, name, dash, x_pos, anchor in [
+        (target,        GREEN,  "TARGET",        "dash",  LEFT_X,  "right"),
+        (stop,          RED,    "PROTECCIÓN",    "dash",  LEFT_X,  "right"),
+        (current_price, ORANGE, CURRENT_NAME,   "solid", RIGHT_X, "left"),
     ]:
         fig.add_shape(type="line", xref="paper", x0=BAND_X0 - 0.02, x1=BAND_X1 + 0.02,
                       y0=price, y1=price, line=dict(color=color, width=2, dash=dash))
         fig.add_annotation(
-            xref="paper", x=LABEL_X, y=price, xanchor="left", yanchor="middle",
+            xref="paper", x=x_pos, y=price, xanchor=anchor, yanchor="middle",
             text=f"<b>{name}</b>  ${price:,.2f}",
             showarrow=False, align="left",
-            font=dict(color=color, size=11, family="JetBrains Mono"),
+            font=dict(color=color, size=lbl_size, family="JetBrains Mono"),
             bgcolor="rgba(11,14,17,0.82)", bordercolor=color,
             borderwidth=1, borderpad=4,
         )
 
     # Los dos números que importan: cuánto se gana y cuánto se arriesga.
-    for y_mid, txt, color in [
-        ((current_price + target) / 2, f"<b>+{upside_pct:.1f}%</b>", GREEN),
-        ((stop + current_price) / 2,   f"<b>−{downside_pct:.1f}%</b>", RED),
+    # Un % solo se dibuja si SU zona tiene altura suficiente. Cuando el precio
+    # actual casi toca al target o a la protección esa zona queda como una
+    # rendija y el texto se montaría encima de las etiquetas de precio (visto
+    # con GOOGL: protección 323.60 vs actual 319.74). En ese caso se omite: el
+    # dato sigue estando en las etiquetas y en el R/R del título.
+    # `abs()` en el downside evita imprimir "−-1.2%" cuando la protección queda
+    # por ENCIMA del precio actual (análisis cacheado que el precio ya invalidó).
+    _visible = (target + (target - stop) * 0.20) - (stop - (target - stop) * 0.20)
+    _min_alto = abs(_visible) * 0.10
+    for (y0, y1), txt, color in [
+        ((current_price, target), f"<b>+{upside_pct:.1f}%</b>", GREEN),
+        ((stop, current_price),   f"<b>−{abs(downside_pct):.1f}%</b>", RED),
     ]:
+        if abs(y1 - y0) < _min_alto:
+            continue
+        y_mid = (y0 + y1) / 2
         fig.add_annotation(xref="paper", x=PCT_X, y=y_mid, xanchor="center",
                            yanchor="middle", text=txt, showarrow=False,
-                           font=dict(color=color, size=19, family="JetBrains Mono"))
+                           font=dict(color=color, size=pct_size, family="JetBrains Mono"))
 
     # Holgura arriba y abajo para que las etiquetas de los extremos quepan
     # enteras (antes se recortaban contra el borde).
@@ -1217,18 +1247,20 @@ def build_rr_chart(current_price: float, stop: float, target: float, ticker: str
         paper_bgcolor=BG_MAIN,
         plot_bgcolor=BG_CARD,
         font=dict(color=TEXT, family="JetBrains Mono, monospace", size=11),
-        height=330,
+        height=fig_h,
         showlegend=False,
         yaxis=dict(range=[stop - span * 0.20, target + span * 0.20],
                    gridcolor=GRID, zerolinecolor=GRID,
-                   tickprefix="$", tickfont=dict(color=MUTED, size=9)),
+                   tickprefix="$", tickfont=dict(color=MUTED, size=tick_size)),
         xaxis=dict(range=[0, 1], showticklabels=False, showgrid=False,
                    zeroline=False, fixedrange=True),
-        margin=dict(l=10, r=20, t=52, b=16),
+        margin=dict(l=8 if compact else 10, r=10 if compact else 20,
+                    t=44 if compact else 52, b=12 if compact else 16),
         hovermode=False,
         title=dict(
-            text=f"<b>UPSIDE / DOWNSIDE</b>  ·  R/R {rr:.1f}:1  ·  desde precio actual",
-            font=dict(color=rr_color, size=13),
+            text=(f"<b>UPSIDE / DOWNSIDE</b>  ·  R/R {rr:.1f}:1" if compact else
+                  f"<b>UPSIDE / DOWNSIDE</b>  ·  R/R {rr:.1f}:1  ·  desde precio actual"),
+            font=dict(color=rr_color, size=11 if compact else 13),
             x=0.01,
             y=0.97,
         ),
