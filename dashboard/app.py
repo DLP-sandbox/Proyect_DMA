@@ -1308,7 +1308,8 @@ def render_overview(analysis: StockAnalysis):
             from data.market_data import get_company_info, get_risk_levels
             _live_info = get_company_info(analysis.ticker) or {}
             _current_price = _safe_num(_live_info.get("current_price")) or _safe_num(analysis.entry_price)
-            _target = _safe_num(analysis.target_price)
+            # Target de analistas de get_company_info como respaldo probado en Render.
+            _target = _safe_num(analysis.target_price) or _safe_num(_live_info.get("target_price"))
             rr_num  = _safe_num(str(analysis.risk_reward or "").split(":")[0]) if analysis.risk_reward else None
             # Respaldo INFALIBLE: si el análisis cacheado no trae precio/target/RR
             # (datos bloqueados al generarse), se recalculan frescos (OHLCV o TradingView).
@@ -2446,7 +2447,9 @@ def render_risk(analysis: StockAnalysis):
     # nan-safe: _safe_num descarta NaN/None → nunca "+nan%"
     current_price = _safe_num(info_live.get("current_price")) or _safe_num(analysis.entry_price)
     stop_lvl   = _safe_num(analysis.stop_loss)
-    target_lvl = _safe_num(analysis.target_price)
+    # Target: cacheado → target de analistas de get_company_info (la MISMA vía
+    # PROBADA que ya funciona en Render para los fundamentales) → get_risk_levels.
+    target_lvl = _safe_num(analysis.target_price) or _safe_num(info_live.get("target_price"))
 
     # Respaldo INFALIBLE: si el análisis cacheado no trae niveles reales (se
     # generó con los datos bloqueados), los recalculamos FRESCOS con la misma

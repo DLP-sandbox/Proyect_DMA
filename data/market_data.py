@@ -488,7 +488,17 @@ def get_technical_indicators(ticker: str, df: pd.DataFrame = None) -> dict:
         df = get_price_history(ticker, period="2y")
     if df is not None and not df.empty:
         ind = compute_technical_indicators(df)
-        if ind:
+        # Validar que los indicadores CLAVE sean números REALES. En cloud yfinance
+        # a veces devuelve un df NO-vacío pero corrupto/incompleto → los cálculos
+        # salen NaN. Si eso pasa, caemos a TradingView (que sí responde en Render)
+        # en vez de propagar NaN. _isnum() trata NaN/inf como inválido.
+        def _isnum(x):
+            try:
+                x = float(x); return x == x and x not in (float("inf"), float("-inf"))
+            except (TypeError, ValueError):
+                return False
+        if ind and _isnum(ind.get("current_price")) and _isnum(ind.get("52w_high")) \
+                and _isnum(ind.get("sma_50")) and _isnum(ind.get("rsi_14")):
             return ind
     return _tradingview_technical_snapshot(ticker)
 
