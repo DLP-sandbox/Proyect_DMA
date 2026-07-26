@@ -523,9 +523,21 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
 /* ── Sidebar styles ────────────────────────────────────────────────── */
 .sidebar-brand {
     text-align: center;
-    padding: 18px 0 20px;
+    /* El botón «minimizar» de la barra va en position:absolute (top:14px, alto
+       ~34px). El logo arranca por debajo para NO solaparse con él. */
+    padding: 58px 0 18px;
     border-bottom: 1px solid var(--hairline);
     margin-bottom: 14px;
+}
+
+/* Logo del Club DLP. Ancho contenido (un 30% menor que la referencia de
+   150px) y `max-width` relativo para que nunca desborde la barra estrecha. */
+.sidebar-brand-img {
+    width: 105px;
+    max-width: 72%;
+    height: auto;
+    display: block;
+    margin: 0 auto;
 }
 
 .sidebar-brand-logo {
@@ -790,7 +802,13 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
 
 /* ── Score Badges: chips con punto de estado, sin degradados ─────────── */
 .badge-strong-buy, .badge-buy, .badge-watch, .badge-pass {
-    padding: 5px 12px 5px 24px;
+    /* Padding simétrico (los 24px de la izquierda dejan sitio al punto de
+       estado) + min-width fijo = TODAS las etiquetas miden lo mismo, mida lo
+       que mida la palabra: "EVITAR" ocupa igual que "EN OBSERVACIÓN". */
+    padding: 5px 24px;
+    min-width: 150px;
+    box-sizing: border-box;
+    text-align: center;
     border-radius: 99px;
     font-weight: 700;
     font-size: 0.66rem;
@@ -1612,8 +1630,8 @@ hr {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
-    height: 30px;
+    width: 34px;
+    height: 34px;
     border-radius: var(--r-sm);
     background: rgba(var(--accent-rgb), 0.08);
     border: 1px solid rgba(var(--accent-rgb), 0.25);
@@ -1624,6 +1642,74 @@ hr {
     letter-spacing: 0.04em;
     flex-shrink: 0;
 }
+
+/* ── Íconos de sección ──────────────────────────────────────────────────
+   Cada sección tiene su propio dibujo y su propio color, sobre el MISMO chip
+   ámbar. Mecanismo idéntico al de los botones Pro/Básico: el SVG viaja como
+   data-URI en `background-image` de un ::before, sin ficheros externos ni
+   emojis. Cada ícono se declara UNA vez como variable y se reutiliza en el
+   chip de la sección y en la pestaña correspondiente.
+   Si una sección no tuviera slug, su chip sigue mostrando el monograma
+   (FN/TC/…) como hasta ahora: nunca queda vacío. */
+:root {
+    --ic-overview:      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cg fill='none' stroke='%23E2B25C' stroke-width='1.7' stroke-linecap='round'%3E%3Cpath d='M3.2 14.6a6.8 6.8 0 1 1 13.6 0'/%3E%3Cpath d='M10 14.6l3.6-4.3'/%3E%3C/g%3E%3C/svg%3E");
+    --ic-tecnico:       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cg stroke='%236FA3E0' stroke-width='1.5' stroke-linecap='round'%3E%3Cline x1='6' y1='3.5' x2='6' y2='16.5'/%3E%3Cline x1='14' y1='5.5' x2='14' y2='18'/%3E%3C/g%3E%3Crect x='4.2' y='6.5' width='3.6' height='6.5' rx='.8' fill='%236FA3E0'/%3E%3Crect x='12.2' y='9' width='3.6' height='6' rx='.8' fill='%236FA3E0'/%3E%3C/svg%3E");
+    --ic-fundamentales: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cg fill='%233DD68C'%3E%3Crect x='3' y='11' width='3.4' height='6' rx='.8'/%3E%3Crect x='8.3' y='7' width='3.4' height='10' rx='.8'/%3E%3Crect x='13.6' y='3.6' width='3.4' height='13.4' rx='.8'/%3E%3C/g%3E%3C/svg%3E");
+    --ic-futuro:        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cg fill='none' stroke='%239D8CE0' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 15l4.5-4.5 3 3 5.5-6'/%3E%3Cpath d='M12.6 7.2h3.9v3.9'/%3E%3C/g%3E%3C/svg%3E");
+    --ic-smartmoney:    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cg fill='none' stroke='%237C8CE0' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 8.2L10 4l7 4.2'/%3E%3Cline x1='5.6' y1='9.8' x2='5.6' y2='14.4'/%3E%3Cline x1='10' y1='9.8' x2='10' y2='14.4'/%3E%3Cline x1='14.4' y1='9.8' x2='14.4' y2='14.4'/%3E%3Cline x1='3.4' y1='16.3' x2='16.6' y2='16.3'/%3E%3C/g%3E%3C/svg%3E");
+    --ic-catalizadores: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M11.2 2L4.6 11.2h4.2L8.2 18l6.8-9.6h-4.3z' fill='%23E0854E'/%3E%3C/svg%3E");
+    --ic-macro:         url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cg fill='none' stroke='%235BC8D8' stroke-width='1.5'%3E%3Ccircle cx='10' cy='10' r='6.8'/%3E%3Cellipse cx='10' cy='10' rx='2.9' ry='6.8'/%3E%3Cline x1='3.2' y1='10' x2='16.8' y2='10'/%3E%3C/g%3E%3C/svg%3E");
+    --ic-sentimiento:   url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cg fill='none' stroke='%23D87CC0' stroke-width='1.6' stroke-linejoin='round'%3E%3Crect x='3' y='4.4' width='14' height='9.2' rx='2'/%3E%3Cpath d='M6.6 13.6v3.2l3.4-3.2'/%3E%3C/g%3E%3C/svg%3E");
+    --ic-riesgo:        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M10 2.6l6.2 2.3v4.9c0 4.1-2.7 7.1-6.2 8-3.5-.9-6.2-3.9-6.2-8V4.9z' fill='none' stroke='%23F1495F' stroke-width='1.6' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.agent-icon[class*="agent-icon--"]::before {
+    content: "";
+    width: 20px;
+    height: 20px;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+}
+
+.agent-icon--overview::before      { background-image: var(--ic-overview); }
+.agent-icon--tecnico::before       { background-image: var(--ic-tecnico); }
+.agent-icon--fundamentales::before { background-image: var(--ic-fundamentales); }
+.agent-icon--futuro::before        { background-image: var(--ic-futuro); }
+.agent-icon--smartmoney::before    { background-image: var(--ic-smartmoney); }
+.agent-icon--catalizadores::before { background-image: var(--ic-catalizadores); }
+.agent-icon--macro::before         { background-image: var(--ic-macro); }
+.agent-icon--sentimiento::before   { background-image: var(--ic-sentimiento); }
+.agent-icon--riesgo::before        { background-image: var(--ic-riesgo); }
+
+/* ── El mismo ícono, en pequeño, delante del nombre de cada pestaña ─────
+   El orden sigue al de st.tabs(): 1 Overview · 2 Técnico · 3 Fundamentales ·
+   4 Futuro · 5 Smart Money · 6 Contexto del Mercado · 7 Riesgo.
+   Se usa :nth-of-type porque cuenta SOLO los <button>, ignorando los divs
+   (tab-highlight / tab-border) que BaseWeb mete dentro de la lista. */
+[data-testid="stTabs"] button[data-baseweb="tab"]::before {
+    content: "";
+    display: inline-block;
+    flex: 0 0 auto;
+    width: 15px;
+    height: 15px;
+    margin-right: 7px;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+    opacity: 0.72;
+    transition: opacity var(--dur-2) var(--ease-out);
+}
+[data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"]::before,
+[data-testid="stTabs"] button[data-baseweb="tab"]:hover::before { opacity: 1; }
+
+[data-testid="stTabs"] button[data-baseweb="tab"]:nth-of-type(1)::before { background-image: var(--ic-overview); }
+[data-testid="stTabs"] button[data-baseweb="tab"]:nth-of-type(2)::before { background-image: var(--ic-tecnico); }
+[data-testid="stTabs"] button[data-baseweb="tab"]:nth-of-type(3)::before { background-image: var(--ic-fundamentales); }
+[data-testid="stTabs"] button[data-baseweb="tab"]:nth-of-type(4)::before { background-image: var(--ic-futuro); }
+[data-testid="stTabs"] button[data-baseweb="tab"]:nth-of-type(5)::before { background-image: var(--ic-smartmoney); }
+[data-testid="stTabs"] button[data-baseweb="tab"]:nth-of-type(6)::before { background-image: var(--ic-macro); }
+[data-testid="stTabs"] button[data-baseweb="tab"]:nth-of-type(7)::before { background-image: var(--ic-riesgo); }
 
 .agent-name {
     font-family: var(--font-ui);
@@ -3411,12 +3497,23 @@ section[data-testid="stSidebar"] {
 .sb-badge-wrap .badge-watch,
 .sb-badge-wrap .badge-pass {
     /* padding-left amplio: deja sitio al punto de estado (::before) para que
-       no se solape con la primera letra de la recomendación. */
-    padding: 4px 9px 4px 19px !important;
-    font-size: 0.58rem !important;
-    letter-spacing: 0.06em !important;
+       no se solape con la primera letra de la recomendación.
+       `width:100%` + min-width neutralizado: dentro del sidebar cada etiqueta
+       rellena SU columna, así todas quedan exactamente igual de anchas sin
+       depender del min-width fijo de la versión grande (que no cabría aquí). */
+    /* Tipografía y padding ajustados para que la etiqueta MÁS LARGA
+       ("EN OBSERVACIÓN") quepa entera dentro del ancho de la columna: al
+       fijar `width:100%` el texto dejó de poder ensanchar la píldora y se
+       salía por la derecha. `overflow:hidden` es el seguro final. */
+    padding: 4px 7px 4px 17px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    text-align: center !important;
+    font-size: 0.50rem !important;
+    letter-spacing: 0.04em !important;
     border-radius: 4px !important;
     white-space: nowrap;
+    overflow: hidden;
     line-height: 1.2;
     /* Glow más sutil aquí — no queremos que el sidebar grite */
     box-shadow: 0 2px 8px rgba(0,0,0,0.35) !important;
@@ -3516,11 +3613,12 @@ section[data-testid="stSidebar"] {
     color: var(--accent) !important;
     font-family: 'Inter', sans-serif !important;
     font-weight: 700 !important;
-    font-size: 0.80rem !important;
+    /* Letra algo mayor y más aire: es el botón principal de la barra. */
+    font-size: 0.92rem !important;
     text-transform: uppercase !important;
-    letter-spacing: 0.10em !important;
-    border-radius: 8px !important;
-    padding: 10px 14px !important;
+    letter-spacing: 0.08em !important;
+    border-radius: 10px !important;
+    padding: 12px 16px !important;
     text-align: center !important;
     box-shadow: 0 2px 10px rgba(var(--accent-rgb),0.08) !important;
     transition: background var(--dur-2) var(--ease-out), border-color var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out), opacity var(--dur-2) var(--ease-out) !important;
@@ -3801,6 +3899,23 @@ def score_css_class(score: float) -> str:
 
 # Monogramas tipográficos (renderizados como chip .agent-icon).
 # Sustituyen a los emojis: identidad sobria estilo terminal.
+# Slug del ícono SVG de cada sección. Se usa para componer la clase
+# `agent-icon--<slug>`, que es la que pinta el dibujo (ver el bloque de
+# ".agent-icon--" en el CSS). AGENT_ICONS (los monogramas) SE CONSERVA: sigue
+# usándose en el texto de carga y como respaldo si una sección no tuviera slug.
+AGENT_ICON_SLUG = {
+    "Fundamentales":       "fundamentales",
+    "Técnico":             "tecnico",
+    "Viabilidad Futura":   "futuro",
+    "Smart Money":         "smartmoney",
+    "Catalizadores":       "catalizadores",
+    "Macro & Sector":      "macro",
+    "Sentimiento":         "sentimiento",
+    "Contexto de Mercado": "macro",
+    "Riesgo & Sizing":     "riesgo",
+    "Orquestador":         "overview",
+}
+
 AGENT_ICONS = {
     "Fundamentales":     "FN",
     "Técnico":           "TC",

@@ -26,7 +26,7 @@ from agents.orchestrator import Orchestrator, StockAnalysis
 from agents.screener import ScreenerAgent, ScreenerResult
 from dashboard.styles import (
     BLOOMBERG_CSS, get_recommendation_badge, score_color,
-    score_css_class, AGENT_ICONS,
+    score_css_class, AGENT_ICONS, AGENT_ICON_SLUG,
 )
 from dashboard.charts import (
     build_price_chart, build_gauge, build_snowflake,
@@ -502,15 +502,41 @@ def _sidebar_scan_labels():
     return out[:3]
 
 
+@st.cache_data(show_spinner=False)
+def _logo_data_uri() -> str:
+    """Logo del Club DLP como data-URI en base64.
+
+    Se incrusta en el HTML en vez de servirse como fichero: así no depende de
+    rutas estáticas y se ve igual en local y en Render. Si el asset faltara,
+    devuelve "" y el sidebar cae al logo tipográfico de siempre."""
+    try:
+        import base64
+        from pathlib import Path
+        p = Path(__file__).parent / "assets" / "logo_dlp.png"
+        return "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode()
+    except Exception:
+        return ""
+
+
 def render_sidebar():
     with st.sidebar:
         # ── Brand ───────────────────────────────────────────────────────
-        st.markdown("""
-        <div class="sidebar-brand">
-            <div class="sidebar-brand-logo">◈ DLP</div>
-            <div class="sidebar-brand-sub">MARKET ANALYZER</div>
-        </div>
-        """, unsafe_allow_html=True)
+        _logo = _logo_data_uri()
+        if _logo:
+            st.markdown(
+                f'<div class="sidebar-brand">'
+                f'<img class="sidebar-brand-img" src="{_logo}" alt="Club DLP">'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            # Respaldo: si el PNG no está, se mantiene el logo tipográfico.
+            st.markdown("""
+            <div class="sidebar-brand">
+                <div class="sidebar-brand-logo">◈ DLP</div>
+                <div class="sidebar-brand-sub">MARKET ANALYZER</div>
+            </div>
+            """, unsafe_allow_html=True)
 
         # ── Botón minimizar columna (el CSS lo posiciona sobre el logo) ──
         if st.button("«", key="sidebar_collapse_btn", help="Minimizar la columna"):
@@ -518,7 +544,7 @@ def render_sidebar():
             st.rerun()
 
         # ── Home ─────────────────────────────────────────────────────────
-        if st.button("⌂  Volver al Home", use_container_width=True, key="sidebar_home"):
+        if st.button("⌂  Volver al Inicio", use_container_width=True, key="sidebar_home"):
             _sb_go_home()
             st.rerun()
 
@@ -604,7 +630,7 @@ def render_top_nav():
     apretaba demasiado el contenido). Solo se muestra en vistas NO-welcome."""
     col_a, col_home, col_c = st.columns([1, 2, 1])
     with col_home:
-        if st.button("⌂  Volver al Home", use_container_width=True,
+        if st.button("⌂  Volver al Inicio", use_container_width=True,
                      key="topnav_home_btn"):
             st.session_state.selected_ticker = None
             st.session_state.quick_view_ticker = None
@@ -910,6 +936,19 @@ def _agent_display_name(report):
     return _AGENT_DISPLAY_ALIAS.get(getattr(report, "agent_name", ""), report.agent_name)
 
 
+def _agent_icon_html(agent_name) -> str:
+    """Chip del ícono de una sección.
+
+    Si la sección tiene ícono SVG propio (AGENT_ICON_SLUG) se emite el chip con
+    la clase `agent-icon--<slug>`, que es la que lo dibuja desde el CSS. Si no
+    lo tuviera, se cae al monograma de siempre (FN/TC/…), así ninguna sección
+    se queda con el chip vacío."""
+    slug = AGENT_ICON_SLUG.get(agent_name)
+    if slug:
+        return f'<span class="agent-icon agent-icon--{slug}"></span>'
+    return f'<span class="agent-icon">{AGENT_ICONS.get(agent_name, "")}</span>'
+
+
 # La convicción se guarda como enum en INGLÉS (HIGH/MEDIUM/LOW) porque de ese
 # valor dependen los agentes, el scoring y los análisis ya cacheados. Aquí solo
 # se traduce lo que se MUESTRA, igual que ya se hace con `quality_verdict`.
@@ -934,13 +973,13 @@ def _render_agent_header(report):
     """Header strip con icono, nombre del agente, score y conviction badge."""
     score = report.score
     color = score_color(score)
-    icon = AGENT_ICONS.get(report.agent_name, "📊")
     conv_colors = {"HIGH": "#3DD68C", "MEDIUM": "#E2B25C", "LOW": "#F1495F"}
     conv_color = conv_colors.get(report.conviction, "#E2B25C")
+    icon_html = _agent_icon_html(report.agent_name)
     st.markdown(f"""
     <div class="agent-header">
         <div class="agent-header-left">
-            <span class="agent-icon">{icon}</span>
+            {icon_html}
             <span class="agent-name">{_agent_display_name(report)}</span>
         </div>
         <div class="agent-header-right">
@@ -2496,7 +2535,7 @@ def render_sentiment(analysis: StockAnalysis):
     col_gauge, col_pills = st.columns([1, 2])
 
     with col_gauge:
-        fig = build_sentiment_gauge(report.score, height=260)
+        fig = build_sentiment_gauge(report.score, height=310)
         _chart(fig, use_container_width=True,
                         key=f"chart_sent_gauge_{analysis.ticker}")
 
@@ -2801,7 +2840,7 @@ def render_scan_results():
             st.session_state._show_scan_results = False
             st.rerun()
     with col_home:
-        if st.button("⌂ Volver al Home", key="scan_back_home",
+        if st.button("⌂ Volver al Inicio", key="scan_back_home",
                      use_container_width=True):
             st.session_state.scan_results = []
             st.session_state.current_scan_id = None

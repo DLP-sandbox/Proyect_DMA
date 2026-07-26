@@ -929,7 +929,7 @@ def build_earnings_history_chart(history: list, height: int = 250) -> go.Figure:
     return fig
 
 
-def build_sentiment_gauge(score: float, height: int = 240) -> go.Figure:
+def build_sentiment_gauge(score: float, height: int = 280) -> go.Figure:
     """Gauge especializado para sentimiento con etiquetas (Bearish → Bullish)."""
     if score >= 75:
         color, label = GREEN, "MUY BULLISH"
@@ -945,7 +945,9 @@ def build_sentiment_gauge(score: float, height: int = 240) -> go.Figure:
     fig = go.Figure(go.Indicator(
         mode="gauge",
         value=score,
-        domain={"x": [0, 1], "y": [0.32, 1.0]},
+        # El arco ocupa más alto (antes arrancaba en 0.32 y sobraba hueco bajo
+        # el número). Con x=[0,1] y márgenes simétricos queda además centrado.
+        domain={"x": [0, 1], "y": [0.24, 1.0]},
         title={"text": f"<b>SENTIMIENTO</b><br><span style='font-size:0.75em;color:{color}'>{label}</span>",
                "font": {"size": 12, "color": MUTED}},
         gauge={
