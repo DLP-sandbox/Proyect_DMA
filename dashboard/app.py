@@ -846,6 +846,26 @@ def _agent_display_name(report):
     return _AGENT_DISPLAY_ALIAS.get(getattr(report, "agent_name", ""), report.agent_name)
 
 
+# La convicción se guarda como enum en INGLÉS (HIGH/MEDIUM/LOW) porque de ese
+# valor dependen los agentes, el scoring y los análisis ya cacheados. Aquí solo
+# se traduce lo que se MUESTRA, igual que ya se hace con `quality_verdict`.
+# Va aparte de _STATUS_ES a propósito: allí LOW/MEDIUM/HIGH son BAJO/MEDIO/ALTO
+# (masculino, para "riesgo bajo"), pero "convicción" es femenina → BAJA/MEDIA/ALTA.
+_CONVICTION_ES = {
+    "HIGH":   "ALTA",
+    "MEDIUM": "MEDIA",
+    "LOW":    "BAJA",
+}
+
+
+def _conviction_es(value):
+    """Convicción en español para mostrar. Si llega un valor inesperado o vacío
+    se devuelve tal cual (nunca rompe ni oculta información)."""
+    if not value:
+        return value
+    return _CONVICTION_ES.get(str(value).strip().upper(), value)
+
+
 def _render_agent_header(report):
     """Header strip con icono, nombre del agente, score y conviction badge."""
     score = report.score
@@ -862,7 +882,7 @@ def _render_agent_header(report):
         <div class="agent-header-right">
             <span class="agent-score" style="color:{color};">{score:.0f}<span class="agent-score-max">/100</span></span>
             <span class="conviction-badge" style="color:{conv_color};border-color:{conv_color}40;background:{conv_color}1A;">
-                {report.conviction}
+                {_conviction_es(report.conviction)}
             </span>
         </div>
     </div>
@@ -1289,13 +1309,13 @@ def render_overview(analysis: StockAnalysis):
             unsafe_allow_html=True,
         )
 
-        # Conviction
+        # Convicción (el color se elige con el enum interno; solo se traduce el texto)
         conviction_color = {"HIGH": "#3DD68C", "MEDIUM": "#C08E3B", "LOW": "#F1495F"}.get(
             analysis.conviction_level, "#C08E3B"
         )
         st.markdown(
             f'<div style="text-align:center;font-family:JetBrains Mono;font-size:0.75rem;color:{conviction_color};margin-top:4px;">'
-            f'Conviction: {analysis.conviction_level}</div>',
+            f'Convicción: {_conviction_es(analysis.conviction_level)}</div>',
             unsafe_allow_html=True,
         )
 
@@ -2555,7 +2575,7 @@ def render_agent_tab(analysis: StockAnalysis, agent_key: str):
             f'<div style="text-align:center;padding:16px;background:#0F1419;border:1px solid #1E2530;border-radius:8px;border-top:3px solid {color};">'
             f'<div style="font-family:JetBrains Mono;font-size:3rem;font-weight:700;color:{color};">{score:.0f}</div>'
             f'<div style="font-size:0.7rem;color:#8D949E;text-transform:uppercase;letter-spacing:0.1em;">Score / 100</div>'
-            f'<div style="font-size:0.75rem;color:{color};margin-top:4px;">{report.conviction}</div>'
+            f'<div style="font-size:0.75rem;color:{color};margin-top:4px;">{_conviction_es(report.conviction)}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
