@@ -811,6 +811,17 @@ def run_market_scan(filters: Optional[dict] = None):
 
 # ── Helpers reutilizables para tabs de agentes ───────────────────────────
 
+# El "Sizing" se retiró de la app (ya no mostramos position sizing). El agente de
+# riesgo conserva su nombre INTERNO ("Riesgo & Sizing" — clave del icono y del
+# scoring, y de los análisis ya cacheados), pero en pantalla se rotula solo
+# "Riesgo". Es un alias de DISPLAY, reversible, que no toca datos ni scoring.
+_AGENT_DISPLAY_ALIAS = {"Riesgo & Sizing": "Riesgo"}
+
+
+def _agent_display_name(report):
+    return _AGENT_DISPLAY_ALIAS.get(getattr(report, "agent_name", ""), report.agent_name)
+
+
 def _render_agent_header(report):
     """Header strip con icono, nombre del agente, score y conviction badge."""
     score = report.score
@@ -822,7 +833,7 @@ def _render_agent_header(report):
     <div class="agent-header">
         <div class="agent-header-left">
             <span class="agent-icon">{icon}</span>
-            <span class="agent-name">{report.agent_name}</span>
+            <span class="agent-name">{_agent_display_name(report)}</span>
         </div>
         <div class="agent-header-right">
             <span class="agent-score" style="color:{color};">{score:.0f}<span class="agent-score-max">/100</span></span>
@@ -1322,8 +1333,6 @@ def render_overview(analysis: StockAnalysis):
             entry_str  = f"${_current_price:.2f}"  if _current_price else "—"
             target_str = f"${_target:.2f}" if _target else "—"
             rr_str     = (f"{rr_num:.1f}:1" if rr_num else _extract_rr_ratio(analysis.risk_reward))
-            sizing_str = _extract_percent(analysis.position_size_pct) if analysis.position_size_pct else "—"
-            sizing_num = _safe_num(sizing_str)
 
             metrics = [
                 {
@@ -1339,12 +1348,6 @@ def render_overview(analysis: StockAnalysis):
                     "color": ("#3DD68C" if (rr_num or 0) >= 3 else
                               "#E2B25C" if (rr_num or 0) >= 2 else "#F1495F"),
                     "tooltip": "Risk/Reward Ratio — relación entre la ganancia potencial al target y la pérdida máxima al stop. Un 3:1 significa que arriesgas 1 para ganar 3. Mínimo aceptable para operar: 2:1. El color del valor indica si supera el umbral (verde ≥3, amarillo ≥2, rojo <2).",
-                },
-                {
-                    "icon": "📐", "label": "Sizing", "value": sizing_str,
-                    "color": ("#F1495F" if (sizing_num or 0) == 0 else
-                              "#9D8CE0"),
-                    "tooltip": "Position Sizing — porcentaje del portafolio sugerido. Calculado vía Kelly Criterion modificado. 0% indica que el sistema recomienda NO operar (R/R insuficiente).",
                 },
             ]
 
@@ -2551,7 +2554,7 @@ def render_agent_tab(analysis: StockAnalysis, agent_key: str):
                     )
 
     with col_conv:
-        st.markdown(f"#### {icon} {report.agent_name}")
+        st.markdown(f"#### {icon} {_agent_display_name(report)}")
         st.markdown(
             f'<div class="analysis-card"><div class="analysis-text">{report.analysis}</div></div>',
             unsafe_allow_html=True,
