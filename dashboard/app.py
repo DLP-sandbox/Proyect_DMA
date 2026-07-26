@@ -967,14 +967,21 @@ def _render_insight_card(title, content, color="#E2B25C", icon="💡"):
 
 
 def _safe_num(value, default=None):
-    """Convierte a float si es posible, retorna default si no."""
+    """Convierte a float si es posible, retorna default si no.
+    Trata NaN e infinito como AUSENTE (default) — así un dato faltante nunca se
+    imprime como "nan%" ni rompe una gráfica; se muestra "—" en su lugar."""
     try:
         if value is None or value == "" or value == "N/A":
             return default
         if isinstance(value, str):
             cleaned = value.replace("$", "").replace(",", "").replace("%", "").strip()
-            return float(cleaned)
-        return float(value)
+            v = float(cleaned)
+        else:
+            v = float(value)
+        # NaN (v != v) o infinito → ausente
+        if v != v or v in (float("inf"), float("-inf")):
+            return default
+        return v
     except Exception:
         return default
 
@@ -1098,7 +1105,9 @@ def _extract_rr_ratio(value):
     n = _safe_num(value)
     if n is not None:
         return f"{n:.1f}:1"
-    return s[:10] if s else "—"
+    # Sin ratio numérico (p. ej. "Indeterminado (falta precio…)"): "—", no un
+    # trozo truncado de la frase.
+    return "—"
 
 
 # ── Loading skeletons + spinner pequeño centrado ─────────────────────────
@@ -1431,14 +1440,15 @@ def render_overview(analysis: StockAnalysis):
             """, unsafe_allow_html=True)
 
     # Risk/Reward visual — usando PRECIO ACTUAL de yfinance como referencia
-    if analysis.stop_loss and analysis.target_price:
+    _ov_stop   = _safe_num(analysis.stop_loss)
+    _ov_target = _safe_num(analysis.target_price)
+    if _ov_stop and _ov_target:
         from data.market_data import get_company_info
         info_live = get_company_info(analysis.ticker) or {}
-        current_price = info_live.get("current_price") or analysis.entry_price
-        if current_price:
+        _ov_price = _safe_num(info_live.get("current_price")) or _safe_num(analysis.entry_price)
+        if _ov_price:
             st.markdown("---")
-            fig = build_rr_chart(current_price, analysis.stop_loss,
-                                 analysis.target_price, analysis.ticker)
+            fig = build_rr_chart(_ov_price, _ov_stop, _ov_target, analysis.ticker)
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
                             key=f"chart_overview_rr_{analysis.ticker}")
 
@@ -1517,28 +1527,30 @@ def render_technical(analysis: StockAnalysis):
     # ── Status pills clave (Stage, RSI, MACD, Distancia 52W high) ──
     st.markdown('<div class="section-title-bar">Indicadores Clave</div>', unsafe_allow_html=True)
 
-    stage = indicators.get("stage", 0) or 0
+    # Todos los indicadores pasan por _safe_num → NaN/None se muestran como "—",
+    # nunca como "nan%". (En cloud, si un dato faltara puntualmente, degrada bien.)
+    stage = int(_safe_num(indicators.get("stage")) or 0)
     stage_level = "good" if stage == 2 else "neutral" if stage == 1 else "warn" if stage == 3 else "bad"
     stage_sub = {2: "Tendencia alcista", 1: "Acumulación", 3: "Distribución", 4: "Bajista"}.get(stage, "Sin definir")
 
-    rsi = indicators.get("rsi_14", 50) or 50
-    rsi_level = "bad" if rsi > 70 or rsi < 30 else "good" if 40 <= rsi <= 60 else "neutral"
+    rsi = _safe_num(indicators.get("rsi_14"))
+    rsi_level = "neutral" if rsi is None else ("bad" if rsi > 70 or rsi < 30 else "good" if 40 <= rsi <= 60 else "neutral")
 
-    macd_hist = indicators.get("macd_hist", 0) or 0
-    macd_level = "good" if macd_hist > 0 else "bad"
-    macd_val = "Alcista" if macd_hist > 0 else "Bajista"
+    macd_hist = _safe_num(indicators.get("macd_hist"))
+    macd_level = "neutral" if macd_hist is None else ("good" if macd_hist > 0 else "bad")
+    macd_val = "—" if macd_hist is None else ("Alcista" if macd_hist > 0 else "Bajista")
 
-    pct_high = indicators.get("pct_from_52w_high", 0) or 0
-    high_level = "good" if pct_high > -5 else "neutral" if pct_high > -15 else "bad"
+    pct_high = _safe_num(indicators.get("pct_from_52w_high"))
+    high_level = "neutral" if pct_high is None else ("good" if pct_high > -5 else "neutral" if pct_high > -15 else "bad")
 
     _render_status_pills([
-        {"label": "Stage Minervini", "value": f"Stage {stage}", "level": stage_level, "sub": stage_sub},
-        {"label": "RSI 14", "value": f"{rsi:.1f}", "level": rsi_level,
-         "sub": "Sobrecomprado" if rsi > 70 else "Sobrevendido" if rsi < 30 else "Neutral"},
+        {"label": "Stage Minervini", "value": (f"Stage {stage}" if stage else "—"), "level": stage_level, "sub": stage_sub},
+        {"label": "RSI 14", "value": (f"{rsi:.1f}" if rsi is not None else "—"), "level": rsi_level,
+         "sub": ("Sobrecomprado" if (rsi or 0) > 70 else "Sobrevendido" if (rsi is not None and rsi < 30) else "Neutral")},
         {"label": "MACD Hist", "value": macd_val, "level": macd_level,
-         "sub": f"{macd_hist:+.3f}"},
-        {"label": "Dist. 52W High", "value": f"{pct_high:.1f}%", "level": high_level,
-         "sub": "Cerca del máximo" if pct_high > -5 else "Lejos del máximo"},
+         "sub": (f"{macd_hist:+.3f}" if macd_hist is not None else "sin dato")},
+        {"label": "Dist. 52W High", "value": (f"{pct_high:.1f}%" if pct_high is not None else "—"), "level": high_level,
+         "sub": ("Cerca del máximo" if (pct_high is not None and pct_high > -5) else "Lejos del máximo" if pct_high is not None else "sin dato")},
     ])
 
     # ── Performance vs MAs y vs SPY ──
@@ -1550,7 +1562,7 @@ def render_technical(analysis: StockAnalysis):
     with col_mas:
         ma_items = []
         for n, color in [(20, "#6FA3E0"), (50, "#F0C878"), (150, "#E0703F"), (200, "#F1495F")]:
-            pct = indicators.get(f"price_vs_sma{n}_pct")
+            pct = _safe_num(indicators.get(f"price_vs_sma{n}_pct"))   # nan-safe
             if pct is not None:
                 bar_color = "#3DD68C" if pct > 0 else "#F1495F"
                 ma_items.append((f"vs SMA {n}", pct, bar_color))
@@ -1560,9 +1572,20 @@ def render_technical(analysis: StockAnalysis):
                             key=f"chart_technical_mas_{analysis.ticker}")
 
     with col_rs:
+        # nan-safe: análisis cacheados de producción (yfinance bloqueado) traen
+        # rs en NaN. Si TODOS vienen vacíos, re-consultamos fresco (get_relative_
+        # _strength funciona con datos en vivo). Nunca dibuja barras con NaN.
+        rs_vals = {p: _safe_num(rs.get(p)) for p in ("rs_1m", "rs_3m", "rs_6m")}
+        if all(v is None for v in rs_vals.values()):
+            try:
+                from data.market_data import get_relative_strength
+                fresh_rs = get_relative_strength(analysis.ticker) or {}
+                rs_vals = {p: _safe_num(fresh_rs.get(p)) for p in ("rs_1m", "rs_3m", "rs_6m")}
+            except Exception:
+                pass
         rs_items = []
         for period, label in [("rs_1m", "RS 1M"), ("rs_3m", "RS 3M"), ("rs_6m", "RS 6M")]:
-            v = rs.get(period)
+            v = rs_vals.get(period)
             if v is not None:
                 bar_color = "#3DD68C" if v > 0 else "#F1495F"
                 rs_items.append((label, v, bar_color))
@@ -1605,6 +1628,12 @@ def render_fundamentals(analysis: StockAnalysis):
 
     # Fallback chain: yfinance fresco → raw_data del agente → key_metrics del agente
     ratios = {**(rd.get("ratios") or {}), **ratios_fresh}
+    # nan-safe global: convierte CUALQUIER número NaN de ratios/info a None (así
+    # todos los `is not None` de las tiles lo excluyen → "—", nunca "nan%").
+    # Datos de producción con yfinance bloqueado llegaban en NaN.
+    _nan_none = lambda d: {k: (_safe_num(v) if isinstance(v, (int, float)) else v) for k, v in d.items()}
+    ratios = _nan_none(ratios)
+    info = _nan_none(info)
 
     # ── KPI tiles: Crecimiento + Rentabilidad ─────────────────────
     st.markdown('<div class="section-title-bar">Crecimiento y Rentabilidad</div>',
@@ -2115,8 +2144,8 @@ def render_catalysts(analysis: StockAnalysis):
             beat_tooltip = "Beat rate estimado por el agente de catalizadores."
             beat_color = "#E2B25C"
 
-    avg_surp = earnings.get("avg_surprise")
-    if isinstance(avg_surp, (int, float)):
+    avg_surp = _safe_num(earnings.get("avg_surprise"))   # nan-safe
+    if avg_surp is not None:
         avg_surp_str = f"{avg_surp:+.1f}%"
         avg_surp_tooltip = ("Promedio de % sorpresa en EPS sobre el consenso. "
                             "Positivo y sostenido indica momentum fundamental.")
@@ -2257,9 +2286,9 @@ def render_macro(analysis: StockAnalysis):
     for i, (label, data, fmt) in enumerate(indicators_macro):
         if not isinstance(data, dict):
             data = {}
-        curr = data.get("current")
-        chg = data.get("1m_change", 0) or 0
-        if isinstance(curr, (int, float)):
+        curr = _safe_num(data.get("current"))   # nan-safe
+        chg = _safe_num(data.get("1m_change")) or 0
+        if curr is not None:
             if fmt == "yield":
                 val_str = f"{curr:.2f}%"
             elif fmt == "price":
@@ -2272,7 +2301,7 @@ def render_macro(analysis: StockAnalysis):
             val_str = "—"
         color = "#3DD68C" if chg >= 0 else "#F1495F"
         arrow = "▲" if chg >= 0 else "▼"
-        chg_str = f"{arrow} {abs(chg):.2f}% (1M)" if isinstance(curr, (int, float)) else "—"
+        chg_str = f"{arrow} {abs(chg):.2f}% (1M)" if curr is not None else "—"
         with cols[i]:
             st.markdown(f"""
             <div class="market-pulse-card">
@@ -2388,23 +2417,27 @@ def render_risk(analysis: StockAnalysis):
     vol      = _safe_num(km.get("volatility_atr_pct"))
     rr_raw   = km.get("risk_reward", "")
 
-    # Get computed values as fallback
+    # Get computed values as fallback (nan-safe: el computed_risk de análisis
+    # viejos de prod puede traer atr_pct en NaN → _safe_num lo vuelve None → "—")
     computed = rd.get("computed_risk", {}) or {}
-    if vol is None: vol = computed.get("atr_pct")
+    if vol is None: vol = _safe_num(computed.get("atr_pct"))
 
     # Recalcular Pérdida Máxima y Ganancia Potencial usando el PRECIO ACTUAL en vivo
     # (más útil que el entry hipotético del agente)
     from data.market_data import get_company_info
     info_live = get_company_info(analysis.ticker) or {}
-    current_price = info_live.get("current_price") or analysis.entry_price
+    # nan-safe: _safe_num descarta NaN/None → nunca "+nan%"
+    current_price = _safe_num(info_live.get("current_price")) or _safe_num(analysis.entry_price)
+    stop_lvl   = _safe_num(analysis.stop_loss)
+    target_lvl = _safe_num(analysis.target_price)
 
     downside = None
     upside = None
     rr_num = None
-    if current_price and analysis.stop_loss:
-        downside = (current_price - analysis.stop_loss) / current_price * 100
-    if current_price and analysis.target_price:
-        upside = (analysis.target_price - current_price) / current_price * 100
+    if current_price and stop_lvl:
+        downside = (current_price - stop_lvl) / current_price * 100
+    if current_price and target_lvl:
+        upside = (target_lvl - current_price) / current_price * 100
     if downside and downside > 0 and upside is not None:
         rr_num = upside / downside
 
@@ -2431,17 +2464,13 @@ def render_risk(analysis: StockAnalysis):
     ])
 
     # ── R/R Chart visual — usando PRECIO ACTUAL como referencia ──
-    if analysis.stop_loss and analysis.target_price:
-        from data.market_data import get_company_info
-        info_live = get_company_info(analysis.ticker) or {}
-        current_price = info_live.get("current_price") or analysis.entry_price
-        if current_price:
-            st.markdown('<div class="section-title-bar">Upside / Downside vs Precio Actual</div>',
-                        unsafe_allow_html=True)
-            fig = build_rr_chart(current_price, analysis.stop_loss,
-                                 analysis.target_price, analysis.ticker)
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
-                            key=f"chart_risk_tab_rr_{analysis.ticker}")
+    # Reusa current_price/stop_lvl/target_lvl ya saneados arriba (nan-safe).
+    if current_price and stop_lvl and target_lvl:
+        st.markdown('<div class="section-title-bar">Upside / Downside vs Precio Actual</div>',
+                    unsafe_allow_html=True)
+        fig = build_rr_chart(current_price, stop_lvl, target_lvl, analysis.ticker)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+                        key=f"chart_risk_tab_rr_{analysis.ticker}")
 
     # ── Pros / Cons ──
     _render_pros_cons(report,

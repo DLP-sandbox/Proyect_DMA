@@ -276,24 +276,72 @@ class BaseAgent:
             return {"error": str(e), "score": 50, "analysis": f"Error en análisis: {e}", "pros": [], "cons": []}
 
     def _parse_json(self, text: str) -> dict:
-        """Extrae el primer bloque JSON de la respuesta."""
-        # Intenta bloque ```json ... ```
-        match = re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
-        if match:
-            try:
-                return json.loads(match.group(1))
-            except json.JSONDecodeError:
-                pass
+        """Extrae y parsea el JSON de la respuesta del modelo, de forma robusta.
 
-        # Intenta JSON inline (primer { ... })
-        match = re.search(r"\{[\s\S]+\}", text)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
+        Si el JSON viene malformado o con texto EXTRA (p. ej. prosa tipo
+        "Contexto Complementario" después del bloque, o un `}` cambiado por `]`),
+        NUNCA vuelca el texto crudo en `analysis`: intenta varios candidatos y,
+        como último recurso, recupera solo los campos de texto por regex para que
+        la UI muestre únicamente el análisis limpio — jamás el JSON con símbolos."""
+        candidates = []
 
-        return {"error": "No se pudo parsear JSON", "raw": text, "score": 50, "analysis": text, "pros": [], "cons": []}
+        # 1) Bloque cercado ```json ... ```
+        m = re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
+        if m:
+            candidates.append(m.group(1))
+
+        # 2) Objeto {...} BALANCEADO desde el primer '{' — descarta la prosa que
+        #    el modelo a veces añade después del JSON.
+        start = text.find("{")
+        if start != -1:
+            depth = 0
+            for i in range(start, len(text)):
+                ch = text[i]
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        candidates.append(text[start:i + 1])
+                        break
+
+        # 3) Voraz: primer '{' hasta el último '}'.
+        m = re.search(r"\{[\s\S]+\}", text)
+        if m:
+            candidates.append(m.group(0))
+
+        for cand in candidates:
+            try:
+                return json.loads(cand)
+            except Exception:
+                continue
+
+        # ── Último recurso: recuperar SOLO los campos de texto por regex.
+        #    Nunca devolvemos el texto crudo como `analysis`.
+        def _field(name: str) -> str:
+            mm = re.search(r'"' + name + r'"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+            if not mm:
+                return ""
+            try:
+                return json.loads('"' + mm.group(1) + '"')
+            except Exception:
+                return mm.group(1)
+
+        def _score() -> float:
+            mm = re.search(r'"score"\s*:\s*([0-9]+(?:\.[0-9]+)?)', text)
+            try:
+                return float(mm.group(1)) if mm else 50
+            except Exception:
+                return 50
+
+        return {
+            "error":      "JSON malformado (recuperado por campos)",
+            "score":      _score(),
+            "conviction": _field("conviction") or "MEDIUM",
+            "analysis":   _field("analysis"),
+            "pros":       [],
+            "cons":       [],
+        }
 
     def _format_number(self, value, decimals: int = 2, suffix: str = "") -> str:
         if value is None:

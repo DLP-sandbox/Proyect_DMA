@@ -22,6 +22,16 @@ CACHE_DIR = Path(__file__).parent.parent / ".cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
 
+# ── Constructor de yf.Ticker (envoltorio único) ───────────────────────────
+# yfinance 1.x YA impersona a Chrome internamente vía curl_cffi, así que el
+# `yf.Ticker(ticker)` pelado es lo correcto para IPs de datacenter (Render /
+# Cloud). NO se le pasa una sesión curl_cffi externa: en yfinance 1.x eso
+# CHOCA con su sesión interna y CUELGA el render de Streamlit (pantalla en
+# blanco). Este envoltorio existe solo para tener un único punto de creación.
+def _yt(ticker: str):
+    return yf.Ticker(ticker)
+
+
 # ── Validación de ticker (rápida, gratis — NO usa Anthropic) ──────────────
 
 # Regex de caracteres permitidos en un ticker NYSE/NASDAQ.
@@ -251,7 +261,7 @@ def get_price_history(ticker: str, period: str = "2y", interval: str = "1d") -> 
         df.index = pd.to_datetime(df.index)
         return df
 
-    stock = yf.Ticker(ticker)
+    stock = _yt(ticker)
     df = stock.history(period=period, interval=interval, auto_adjust=True)
     if df.empty:
         return df
@@ -275,7 +285,7 @@ def get_live_price(ticker: str) -> Optional[float]:
         return cached.get("price")
 
     try:
-        stock = yf.Ticker(ticker)
+        stock = _yt(ticker)
         # fast_info es mucho más rápido que info — solo trae datos esenciales
         try:
             price = float(stock.fast_info.get("lastPrice") or stock.fast_info.get("last_price") or 0)
@@ -308,7 +318,7 @@ def get_company_info(ticker: str) -> dict:
             cached["current_price"] = live
         return cached
 
-    stock = yf.Ticker(ticker)
+    stock = _yt(ticker)
     try:
         info = stock.info or {}
     except Exception:
@@ -484,7 +494,7 @@ def get_financials(ticker: str) -> dict:
     if cached:
         return cached
 
-    stock = yf.Ticker(ticker)
+    stock = _yt(ticker)
     result = {}
 
     try:
@@ -678,8 +688,13 @@ def compute_technical_indicators(df: pd.DataFrame) -> dict:
     # Moving Averages
     for n in [20, 50, 150, 200]:
         ma = close.rolling(n).mean()
-        indicators[f"sma_{n}"] = float(ma.iloc[-1]) if not ma.empty else None
-        indicators[f"price_vs_sma{n}_pct"] = float((close.iloc[-1] / ma.iloc[-1] - 1) * 100) if ma.iloc[-1] else None
+        ma_last = float(ma.iloc[-1]) if not ma.empty else None
+        # pd.isna() atrapa NaN (media sin suficientes datos) → evita nan% aguas abajo
+        if ma_last is not None and pd.isna(ma_last):
+            ma_last = None
+        indicators[f"sma_{n}"] = ma_last
+        indicators[f"price_vs_sma{n}_pct"] = (
+            float((close.iloc[-1] / ma_last - 1) * 100) if ma_last else None)
 
     # EMA
     for n in [8, 21]:
@@ -739,10 +754,17 @@ def compute_technical_indicators(df: pd.DataFrame) -> dict:
 
     # Price stats
     indicators["current_price"] = float(close.iloc[-1])
-    indicators["52w_high"] = float(high.tail(252).max())
-    indicators["52w_low"] = float(low.tail(252).min())
-    indicators["pct_from_52w_high"] = float((close.iloc[-1] / high.tail(252).max() - 1) * 100)
-    indicators["pct_from_52w_low"] = float((close.iloc[-1] / low.tail(252).min() - 1) * 100)
+    # 52 semanas — nan-safe: si el máximo/mínimo sale NaN (datos con huecos),
+    # se deja None en vez de propagar nan a los "%" que se muestran en la UI.
+    _hi52 = float(high.tail(252).max())
+    _lo52 = float(low.tail(252).min())
+    _px = float(close.iloc[-1])
+    _hi52 = None if pd.isna(_hi52) else _hi52
+    _lo52 = None if pd.isna(_lo52) else _lo52
+    indicators["52w_high"] = _hi52
+    indicators["52w_low"] = _lo52
+    indicators["pct_from_52w_high"] = float((_px / _hi52 - 1) * 100) if _hi52 else None
+    indicators["pct_from_52w_low"] = float((_px / _lo52 - 1) * 100) if _lo52 else None
 
     # Stage Analysis (Minervini)
     indicators["stage"] = _compute_stage(close, indicators)
@@ -926,7 +948,7 @@ def get_holders_data(ticker: str) -> dict:
     if cached:
         return cached
 
-    stock = yf.Ticker(ticker)
+    stock = _yt(ticker)
     result = {}
 
     try:
@@ -1019,7 +1041,7 @@ def get_news(ticker: str, max_items: int = 15) -> list[dict]:
     if cached:
         return cached
 
-    stock = yf.Ticker(ticker)
+    stock = _yt(ticker)
     result = []
     now = datetime.now()
 
@@ -1116,7 +1138,7 @@ def get_macro_data() -> dict:
     for key_name, sym in tickers_map.items():
         try:
             # Usar .history() en lugar de download() para evitar multi-index columns
-            df = yf.Ticker(sym).history(period="3mo")
+            df = _yt(sym).history(period="3mo")
             if df.empty or "Close" not in df.columns:
                 continue
             close = df["Close"].dropna()
@@ -1139,7 +1161,7 @@ def get_macro_data() -> dict:
     for etf, name in sector_etfs.items():
         try:
             # Usar .history() (no .download) para evitar multi-index column bugs
-            df = yf.Ticker(etf).history(period="1y")
+            df = _yt(etf).history(period="1y")
             if df.empty or "Close" not in df.columns:
                 continue
             close = df["Close"].dropna()
@@ -1265,7 +1287,7 @@ def get_earnings_data(ticker: str) -> dict:
     if cached:
         return cached
 
-    stock = yf.Ticker(ticker)
+    stock = _yt(ticker)
     result = {}
     now = pd.Timestamp.now()
 
