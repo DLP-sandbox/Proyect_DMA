@@ -68,7 +68,15 @@ def _chart(fig, **kwargs):
         pass
     kwargs.setdefault("use_container_width", True)
     kwargs["config"] = STATIC_CHART_CONFIG
-    st.plotly_chart(fig, **kwargs)
+    # Tarjeta envolvente (misma estética que .analysis-card). El ancla oculta
+    # `.chart-card-anchor` es lo que el CSS busca con :has(), igual que ya se
+    # hace con `.scanner-pri-anchor`: sin ella, un :has([stPlotlyChart]) genérico
+    # también pintaría cualquier contenedor ANCESTRO que tuviera una gráfica
+    # dentro. El padding vive en el WRAPPER, nunca en [stPlotlyChart], para no
+    # alterar la medición de ancho de Plotly (use_container_width).
+    with st.container(border=True):
+        st.markdown('<div class="chart-card-anchor"></div>', unsafe_allow_html=True)
+        st.plotly_chart(fig, **kwargs)
 
 
 # ── State inicial ─────────────────────────────────────────────────────────
@@ -962,9 +970,16 @@ def _render_status_pills(pills):
             pct = p.get("meter", level_meter.get(level, 55.0))
             sub = p.get("sub", "")
             sub_html = f'<div class="status-pill-sub">{sub}</div>' if sub else ''
+            # Mismo botón de ayuda que los KPI tiles: '?' arriba a la derecha
+            # que muestra la explicación al pasar el ratón.
+            tooltip = p.get("tooltip", "")
+            help_html = f'<span class="kpi-help" data-tooltip="{tooltip}">?</span>' if tooltip else ""
             st.markdown(f"""
             <div class="status-pill">
-                <div class="status-pill-label">{p['label']}</div>
+                <div class="status-pill-header">
+                    <div class="status-pill-label">{p['label']}</div>
+                    {help_html}
+                </div>
                 <div class="status-pill-value"><span class="status-pill-dot" style="background:{color};"></span>{p['value']}</div>
                 {sub_html}
                 {_meter_html(pct)}
@@ -1608,13 +1623,17 @@ def render_technical(analysis: StockAnalysis):
     high_level = "neutral" if pct_high is None else ("good" if pct_high > -5 else "neutral" if pct_high > -15 else "bad")
 
     _render_status_pills([
-        {"label": "Stage Minervini", "value": (f"Stage {stage}" if stage else "—"), "level": stage_level, "sub": stage_sub},
+        {"label": "Stage Minervini", "value": (f"Stage {stage}" if stage else "—"), "level": stage_level, "sub": stage_sub,
+         "tooltip": "Etapa del ciclo de Minervini según dónde está el precio respecto a sus medias móviles. Stage 1 = acumulación (base lateral tras caer), Stage 2 = tendencia alcista confirmada (la etapa ideal para comprar), Stage 3 = distribución (techo, el dinero fuerte va saliendo), Stage 4 = tendencia bajista."},
         {"label": "RSI 14", "value": (f"{rsi:.1f}" if rsi is not None else "—"), "level": rsi_level,
-         "sub": ("Sobrecomprado" if (rsi or 0) > 70 else "Sobrevendido" if (rsi is not None and rsi < 30) else "Neutral")},
+         "sub": ("Sobrecomprado" if (rsi or 0) > 70 else "Sobrevendido" if (rsi is not None and rsi < 30) else "Neutral"),
+         "tooltip": "Índice de Fuerza Relativa de 14 días: mide si el precio ha subido o bajado demasiado rápido. Por encima de 70 está sobrecomprado (riesgo de corrección); por debajo de 30 sobrevendido (posible rebote); entre 40 y 60 es zona neutral y saludable."},
         {"label": "MACD Hist", "value": macd_val, "level": macd_level,
-         "sub": (f"{macd_hist:+.3f}" if macd_hist is not None else "sin dato")},
+         "sub": (f"{macd_hist:+.3f}" if macd_hist is not None else "sin dato"),
+         "tooltip": "Histograma del MACD: distancia entre el MACD y su línea de señal. Positivo significa que el impulso alcista se acelera; negativo, que se está agotando. Suele avisar del cambio de momentum antes de que se vea en el precio."},
         {"label": "Dist. 52W High", "value": (f"{pct_high:.1f}%" if pct_high is not None else "—"), "level": high_level,
-         "sub": ("Cerca del máximo" if (pct_high is not None and pct_high > -5) else "Lejos del máximo" if pct_high is not None else "sin dato")},
+         "sub": ("Cerca del máximo" if (pct_high is not None and pct_high > -5) else "Lejos del máximo" if pct_high is not None else "sin dato"),
+         "tooltip": "Cuánto le falta al precio para volver a su máximo de las últimas 52 semanas. Cerca de 0% indica fortaleza (cotiza en máximos anuales); muy negativo indica que sigue lejos de su techo del año."},
     ])
 
     # ── Performance vs MAs y vs SPY ──
@@ -1936,16 +1955,20 @@ def render_future(analysis: StockAnalysis):
         {"label": "Moat Defensivo",
          "value": _clean_tile_value(km.get("moat_strength"), max_len=14),
          "level": moat_level,
-         "sub": _clean_tile_value(km.get("moat_type"), max_len=20)},
+         "sub": _clean_tile_value(km.get("moat_type"), max_len=20),
+         "tooltip": "Fuerza de la ventaja competitiva que protege a la empresa de sus rivales: marca, efectos de red, costos de cambio o escala. Cuanto más ancho es el foso, más difícil resulta que la competencia le quite márgenes y cuota."},
         {"label": "Riesgo Disrupción",
          "value": _clean_tile_value(km.get("disruption_risk"), max_len=14),
-         "level": disr_level, "sub": "IA / tecnología"},
+         "level": disr_level, "sub": "IA / tecnología",
+         "tooltip": "Probabilidad de que la inteligencia artificial, un cambio tecnológico o un nuevo modelo de negocio dejen obsoleto lo que la empresa vende. Riesgo bajo significa un negocio difícil de desplazar en la próxima década."},
         {"label": "Crecimiento TAM",
          "value": _clean_tile_value(km.get("tam_growth"), max_len=18),
-         "level": tam_level, "sub": "Mercado direccionable"},
+         "level": tam_level, "sub": "Mercado direccionable",
+         "tooltip": "Ritmo al que crece el mercado total al que la empresa puede aspirar (TAM). Si el mercado se expande, puede crecer sin necesidad de robarle cuota a nadie; si está estancado, todo crecimiento sale del competidor."},
         {"label": "Calidad Gerencia",
          "value": _clean_tile_value(km.get("management_quality"), max_len=14),
-         "level": mgmt_level, "sub": "Asignación de capital"},
+         "level": mgmt_level, "sub": "Asignación de capital",
+         "tooltip": "Calidad del equipo directivo juzgada por cómo asigna el capital: recompras a buen precio, adquisiciones sensatas, control de la dilución y reinversión con retorno alto. Es lo que más compone valor a largo plazo."},
     ])
 
     # ── Bar chart: 4 pilares del futuro ──
@@ -2035,16 +2058,20 @@ def render_institutional(analysis: StockAnalysis):
     _render_status_pills([
         {"label": "Propiedad Institucional",
          "value": _extract_percent(inst_raw),
-         "level": inst_level, "meter": inst_meter, "sub": "% del capital en fondos"},
+         "level": inst_level, "meter": inst_meter, "sub": "% del capital en fondos",
+         "tooltip": "Porcentaje del capital en manos de fondos, aseguradoras y grandes gestoras. Una participación alta indica respaldo profesional y más liquidez; si es excesiva, queda poco dinero nuevo por entrar."},
         {"label": "Señal de Insiders",
          "value": _clean_tile_value(insider_raw, max_len=12),
-         "level": insider_level, "sub": "Compras vs ventas"},
+         "level": insider_level, "sub": "Compras vs ventas",
+         "tooltip": "Saldo entre compras y ventas de directivos y consejeros de la propia empresa. Que compren con su dinero suele ser la señal más honesta de confianza; las ventas pueden deberse solo a liquidez personal."},
         {"label": "Short Interest",
          "value": _extract_percent(short_raw),
-         "level": short_level, "meter": short_meter, "sub": "Apuestas a la baja"},
+         "level": short_level, "meter": short_meter, "sub": "Apuestas a la baja",
+         "tooltip": "Porcentaje de acciones vendidas en corto, es decir, apostando a que el precio caiga. Un valor alto refleja desconfianza del mercado, pero también es combustible para un rebote si esa tesis bajista falla."},
         {"label": "Potencial Squeeze",
          "value": _clean_tile_value(squeeze_raw, max_len=12),
-         "level": squeeze_level, "sub": "Rebote por cierre de cortos"},
+         "level": squeeze_level, "sub": "Rebote por cierre de cortos",
+         "tooltip": "Posibilidad de un short squeeze: si el precio sube, quienes vendieron en corto se ven forzados a recomprar y esa recompra acelera la subida. Depende del short interest y de los días que costaría cubrir esas posiciones."},
     ])
 
     # ── Top holders bar chart ──
@@ -2311,16 +2338,20 @@ def render_macro(analysis: StockAnalysis):
     _render_status_pills([
         {"label": "Entorno Mercado",
          "value": _clean_tile_value(env_raw, max_len=12),
-         "level": env_level, "sub": "Risk On / Off"},
+         "level": env_level, "sub": "Risk On / Off",
+         "tooltip": "Apetito de riesgo general del mercado. Risk-On: los inversores compran activos de riesgo; Risk-Off: se refugian en bonos y efectivo. Marca el viento a favor o en contra para cualquier acción, por buena que sea."},
         {"label": "Momentum Sector",
          "value": _clean_tile_value(sec_raw, max_len=12),
-         "level": sec_level, "sub": f"Sector: {rd.get('sector', '—')}"},
+         "level": sec_level, "sub": f"Sector: {rd.get('sector', '—')}",
+         "tooltip": "Comportamiento reciente del sector de la empresa frente al resto del mercado. Un sector fuerte empuja al alza incluso a las compañías mediocres; uno débil frena a las buenas."},
         {"label": "Curva Yield",
          "value": _clean_tile_value(yc_raw, max_len=12),
-         "level": yc_level, "sub": "10Y-2Y spread"},
+         "level": yc_level, "sub": "10Y-2Y spread",
+         "tooltip": "Diferencia entre el bono a 10 años y el de 2 años. Normal (positiva) indica economía sana; plana, desaceleración; invertida ha anticipado históricamente las recesiones."},
         {"label": "Nivel VIX",
          "value": _clean_tile_value(vix_raw, max_len=12),
-         "level": vix_level, "sub": "Volatilidad esperada"},
+         "level": vix_level, "sub": "Volatilidad esperada",
+         "tooltip": "Índice de volatilidad esperada del mercado, conocido como el índice del miedo. Por debajo de 20 hay calma; entre 20 y 30, tensión; por encima de 30, pánico y movimientos bruscos."},
     ])
 
     # ── Sector heatmap ──
@@ -2426,17 +2457,21 @@ def render_sentiment(analysis: StockAnalysis):
         _render_status_pills([
             {"label": "Momentum Sentimiento",
              "value": _clean_tile_value(mom_raw, max_len=14),
-             "level": mom_level, "sub": "Mejorando o deteriorando"},
+             "level": mom_level, "sub": "Mejorando o deteriorando",
+         "tooltip": "Dirección en la que se mueve la percepción del mercado sobre la empresa en las últimas semanas: si la narrativa está mejorando o deteriorándose."},
             {"label": "Tema Narrativo",
              "value": _clean_tile_value(narr_raw, max_len=14),
              "level": "neutral",
-             "sub": f"{rd.get('news_count', 0)} noticias"},
+             "sub": f"{rd.get('news_count', 0)} noticias",
+         "tooltip": "Historia dominante que se cuenta hoy sobre la empresa en noticias y análisis. La narrativa mueve el precio a corto plazo aunque los fundamentales no hayan cambiado."},
             {"label": "Señal Contraria",
              "value": _clean_tile_value(cont_raw, max_len=14),
-             "level": cont_level, "sub": "Comprar miedo / Vender euforia"},
+             "level": cont_level, "sub": "Comprar miedo / Vender euforia",
+         "tooltip": "Lectura a contracorriente del sentimiento. Comprar el miedo: el pesimismo es exagerado y crea oportunidad. Vender la euforia: el optimismo ya está descontado en el precio y queda poco recorrido."},
             {"label": "Riesgo Reputacional",
              "value": _clean_tile_value(rep_raw, max_len=10),
-             "level": rep_level, "sub": "ESG / regulatorio"},
+             "level": rep_level, "sub": "ESG / regulatorio",
+         "tooltip": "Exposición a escándalos, litigios, sanciones regulatorias o problemas ESG que puedan dañar la marca y, con ella, la valoración de la empresa."},
         ])
 
     # ── Pros / Cons ──

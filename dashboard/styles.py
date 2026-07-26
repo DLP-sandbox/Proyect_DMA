@@ -1735,6 +1735,16 @@ hr {
     vertical-align: 2px;
 }
 
+/* Cabecera del pill: label a la izquierda y el '?' de ayuda a la derecha
+   (mismo reparto que .kpi-tile-header). El label conserva su margen inferior,
+   así que la cabecera no añade separación extra. */
+.status-pill-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+}
+
 .status-pill-label {
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.6rem;
@@ -2817,6 +2827,38 @@ hr {
 .js-plotly-plot,
 [data-testid="stPlotlyChart"] {
     animation: anim-fadeIn var(--anim-slow) var(--ease-out) both;
+}
+
+/* ── 7b. Tarjeta envolvente de CADA gráfica ─────────────────────────────
+   Mismos tokens que .analysis-card, para que una gráfica se lea como una
+   pieza más del sistema y no como un dibujo suelto sobre el fondo.
+
+   ⚠️ El fondo/borde/padding van SIEMPRE en este wrapper, NUNCA sobre
+   [data-testid="stPlotlyChart"]: aplicarlos ahí altera la caja que Plotly mide
+   para `use_container_width` y las gráficas se desbordan de su columna.
+
+   El ancla `.chart-card-anchor` (la emite _chart() en app.py) acota el :has()
+   a los contenedores que envuelven UNA gráfica; sin ella el selector también
+   alcanzaría a cualquier contenedor ancestro que tuviera una gráfica dentro.
+
+   Dos detalles medidos en el DOM real de esta versión de Streamlit:
+   1) `st.container(border=True)` NO genera stVerticalBlockBorderWrapper (ese
+      testid ya no existe aquí): genera **stLayoutWrapper**. Se mantienen los
+      dos selectores por compatibilidad entre versiones.
+   2) El `:not(:has(... .chart-card-anchor))` deja SOLO el wrapper más interno.
+      Sin él también encajarían los contenedores externos que envuelven varias
+      gráficas (medido: 17 candidatos para 14 gráficas) y saldrían tarjetas
+      anidadas. Con él: 14 wrappers, exactamente una gráfica cada uno. */
+.chart-card-anchor { display: none; }
+
+[data-testid="stVerticalBlockBorderWrapper"]:has(.chart-card-anchor):not(:has([data-testid="stVerticalBlockBorderWrapper"] .chart-card-anchor)),
+[data-testid="stLayoutWrapper"]:has(.chart-card-anchor):not(:has([data-testid="stLayoutWrapper"] .chart-card-anchor)) {
+    background: var(--surface-1) !important;
+    border: 1px solid var(--hairline) !important;
+    border-radius: var(--r-md) !important;
+    box-shadow: var(--inset-hi), var(--shadow-2) !important;
+    padding: 10px 12px !important;
+    margin-bottom: 10px;
 }
 
 /* ── 8. SIDEBAR WATCHLIST — slide-in por elemento ──────────────────── */
