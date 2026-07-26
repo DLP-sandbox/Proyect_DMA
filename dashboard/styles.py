@@ -3606,6 +3606,30 @@ section[data-testid="stSidebar"] {
 /* Iconos-emoji de cards especiales: fuera (identidad tipográfica) */
 .asymmetry-icon, .veto-icon { display: none; }
 
+/* ── Fila de signal-cards: las dos SIEMPRE con la misma altura ─────────
+   Un único contenedor flex con align-items:stretch → la tarjeta más alta fija
+   la altura y la otra la iguala. `nowrap` + `flex:1 1 0` evita que se apilen
+   cuando el contenedor es estrecho (col_thesis en el iframe), que era lo que
+   rompía la simetría. */
+.signal-card-row {
+    display: flex;
+    gap: 14px;
+    align-items: stretch;
+    flex-wrap: nowrap;
+    margin: 8px 0 4px 0;
+}
+.signal-card-row > .signal-card {
+    flex: 1 1 0;       /* mismo ancho para ambas, sin base mínima que fuerce wrap */
+    min-width: 0;      /* permite que encojan en lugar de desbordar/apilar */
+    margin: 0;         /* el gap de la fila gestiona el espaciado */
+    /* `height:100%` (heredado de .signal-card) DESACTIVA align-items:stretch —
+       una altura declarada impide el estirado y, al ser % contra un contenedor
+       de altura automática, se resuelve como auto. Con `auto` sí estira y las
+       dos tarjetas quedan EXACTAMENTE igual de altas. */
+    height: auto;
+    align-self: stretch;
+}
+
 /* ── Signal card: agrupa pros o contras en UNA tarjeta ─────────────────
    Fondo un paso por encima del resto + sombra útil + filo semántico arriba. */
 .signal-card {

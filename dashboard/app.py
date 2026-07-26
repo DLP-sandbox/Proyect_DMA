@@ -308,7 +308,7 @@ def get_client() -> anthropic.Anthropic:
     if st.session_state.client is None or cached_key != current_key:
         _debug_log(f"get_client: key prefix={current_key[:15] if current_key else 'EMPTY'}, len={len(current_key)}")
         if not current_key or len(current_key) < 50:
-            st.error("⚠️ ANTHROPIC_API_KEY no configurada o inválida. Verifica el archivo .env")
+            st.error("ANTHROPIC_API_KEY no configurada o inválida. Verifica el archivo .env")
             st.stop()
         st.session_state.client = anthropic.Anthropic(api_key=current_key)
         st.session_state._cached_api_key = current_key
@@ -744,7 +744,7 @@ def run_market_scan(filters: Optional[dict] = None):
         progress_bar.progress(pct)
         progress_placeholder.markdown(
             f'<div style="color:#C08E3B;font-family:JetBrains Mono;font-size:0.85rem;">'
-            f'🌐 Escaneando el mercado · {ticker} ({idx}/{total})</div>',
+            f'Escaneando el mercado · {ticker} ({idx}/{total})</div>',
             unsafe_allow_html=True,
         )
 
@@ -941,15 +941,19 @@ def _signal_card_html(title, items, kind):
 def _render_pros_cons(report, pros_title="Señales positivas", cons_title="Señales de riesgo"):
     # Cap a máximo 3 cada uno — garantiza el límite sin importar lo que devuelva
     # la IA (las muestra como "las 3 más importantes"). Ahorra y ordena la UI.
-    col_p, col_c = st.columns(2)
-    with col_p:
-        if report.pros:
-            st.markdown(_signal_card_html(pros_title, report.pros[:3], "pos"),
-                        unsafe_allow_html=True)
-    with col_c:
-        if report.cons:
-            st.markdown(_signal_card_html(cons_title, report.cons[:3], "neg"),
-                        unsafe_allow_html=True)
+    #
+    # Ambas tarjetas se emiten en UN SOLO bloque flex (no en dos st.columns): así
+    # `align-items: stretch` garantiza que las dos tengan SIEMPRE la misma altura
+    # — la que tenga más ítems fija la altura y la otra la iguala. Con columnas
+    # separadas el height:100% no propaga por el anidado de Streamlit.
+    cards = ""
+    if report.pros:
+        cards += _signal_card_html(pros_title, report.pros[:3], "pos")
+    if report.cons:
+        cards += _signal_card_html(cons_title, report.cons[:3], "neg")
+    if cards:
+        st.markdown(f'<div class="signal-card-row">{cards}</div>',
+                    unsafe_allow_html=True)
 
 
 def _render_analysis_card(report, title="Análisis Detallado"):
@@ -1373,7 +1377,7 @@ def render_overview(analysis: StockAnalysis):
                 st.markdown(f"""
                 <div class="kpi-tile">
                     <div class="kpi-tile-header">
-                        <span class="kpi-tile-label">{m['icon']} {m['label']}</span>
+                        <span class="kpi-tile-label">{m['label']}</span>
                         <span class="kpi-help" data-tooltip="{m['tooltip']}">?</span>
                     </div>
                     <div class="kpi-tile-value" style="color:{m['color']};">{m['value']}</div>
@@ -1385,27 +1389,23 @@ def render_overview(analysis: StockAnalysis):
         # solo se quitó su visualización). ─────────────────────────
 
     with col_thesis:
-        st.markdown("#### 👔 Tesis de Inversión — Orquestador")
+        st.markdown("#### Tesis de Inversión — Orquestador")
         st.markdown(
             f'<div class="analysis-card"><div class="analysis-text">{analysis.investment_thesis}</div></div>',
             unsafe_allow_html=True,
         )
 
-        # ── Fortalezas / Riesgos en cards ────────────────────────
-        col_s, col_r = st.columns(2)
-        with col_s:
-            if analysis.key_strengths:
-                st.markdown('<div class="thesis-section-title strength">💪 Fortalezas Clave</div>',
-                            unsafe_allow_html=True)
-                for s in analysis.key_strengths:
-                    st.markdown(f'<div class="strength-item">{s}</div>', unsafe_allow_html=True)
-
-        with col_r:
-            if analysis.key_risks:
-                st.markdown('<div class="thesis-section-title risk">⚠️ Riesgos Clave</div>',
-                            unsafe_allow_html=True)
-                for r in analysis.key_risks:
-                    st.markdown(f'<div class="risk-item">{r}</div>', unsafe_allow_html=True)
+        # ── Fortalezas / Riesgos en signal-cards de IGUAL altura ──────
+        # Un solo bloque flex (no dos columnas) → align-items:stretch iguala
+        # la altura de ambas tarjetas a la de la más alta.
+        _sr_cards = ""
+        if analysis.key_strengths:
+            _sr_cards += _signal_card_html("Fortalezas Clave", analysis.key_strengths, "pos")
+        if analysis.key_risks:
+            _sr_cards += _signal_card_html("Riesgos Clave", analysis.key_risks, "neg")
+        if _sr_cards:
+            st.markdown(f'<div class="signal-card-row">{_sr_cards}</div>',
+                        unsafe_allow_html=True)
 
         # ── Card NUEVA: Diagnóstico de Asimetría (upside / downside / balanced) ─
         asym_dir = getattr(analysis, "asymmetry_direction", None)
@@ -1840,7 +1840,7 @@ def render_fundamentals(analysis: StockAnalysis):
     if sub_items:
         fig = build_metric_bars(sub_items, height=240,
                                 title="SUB-SCORES (0-100)", x_format="num",
-                                x_zero_line=False)
+                                x_zero_line=False, color_by_score=True)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
                         key=f"chart_fund_pillars_{analysis.ticker}")
 
@@ -1923,7 +1923,7 @@ def render_future(analysis: StockAnalysis):
     if sub_items:
         fig = build_metric_bars(sub_items, height=240,
                                 title="SUB-SCORES (0-100)", x_format="num",
-                                x_zero_line=False)
+                                x_zero_line=False, color_by_score=True)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
                         key=f"chart_future_pillars_{analysis.ticker}")
 
@@ -2363,7 +2363,7 @@ def render_sentiment(analysis: StockAnalysis):
                         key=f"chart_sent_gauge_{analysis.ticker}")
 
     with col_pills:
-        st.markdown('<div class="section-title-bar" style="margin-top:0;">📰 Estado de la Narrativa</div>',
+        st.markdown('<div class="section-title-bar" style="margin-top:0;">Estado de la Narrativa</div>',
                     unsafe_allow_html=True)
 
         mom_raw = km.get("sentiment_momentum") or "stable"
@@ -2611,7 +2611,7 @@ def render_scan_results():
     # ── Top action bar: volver a filtros + volver al home ──
     col_filters, col_home, _spacer = st.columns([2, 2, 6])
     with col_filters:
-        if st.button("🔧 Ajustar filtros", key="scan_back_to_filters",
+        if st.button("Ajustar filtros", key="scan_back_to_filters",
                      use_container_width=True,
                      help="Volver al screener para modificar los filtros"):
             st.session_state.scanner_config_open = True
@@ -2625,7 +2625,7 @@ def render_scan_results():
             st.session_state._show_scan_results = False
             st.rerun()
 
-    st.markdown("## 🌐 Resultados del Scan de Mercado")
+    st.markdown("## Resultados del Scan de Mercado")
     n = len(st.session_state.scan_results)
     st.markdown(f"*{n} candidatos pasaron los filtros del screener*")
 
@@ -2638,10 +2638,10 @@ def render_scan_results():
         # Mostrar SIEMPRE el diagnóstico para entender qué pasó
         if err:
             color = "#F1495F"
-            msg = f"❌ Error de TradingView: {err}"
+            msg = f"Error de TradingView: {err}"
         elif universe < 100:
             color = "#E2B25C"
-            msg = (f"⚠️ TradingView devolvió solo <strong>{universe} acciones</strong> "
+            msg = (f"TradingView devolvió solo <strong>{universe} acciones</strong> "
                    f"al universo crudo (esperábamos 1000+). De ellas, <strong>{passing}</strong> "
                    f"pasaron los filtros. Puede ser rate-limit transitorio — reintenta en 1-2 min.")
         else:
@@ -2667,7 +2667,7 @@ def render_scan_results():
                 "Puedes ajustar los filtros desde 'Escanear el Mercado' o lanzar un análisis individual de una acción específica."
             )
         else:
-            st.info("No hay resultados de scan. Usa el botón '🌐 Escanear el Mercado' en el home.")
+            st.info("No hay resultados de scan. Usa el botón 'Escanear el Mercado' en el home.")
         return
 
 
@@ -2707,7 +2707,7 @@ def render_scan_results():
         # gráfica, métricas clave, noticias y performance. Reemplaza al análisis
         # completo directo desde el scan para no gastar créditos en cada acción.
         # Si el ticker ya tiene un análisis completo en sesión, lo muestra directo.
-        if st.button(f"🔍 Ver más — {result.ticker}",
+        if st.button(f"Ver más — {result.ticker}",
                      key=f"scan_quickview_{result.ticker}",
                      use_container_width=True):
             if result.ticker in st.session_state.analyses:
@@ -2751,9 +2751,6 @@ def _scanner_card_open(icon: str, title: str, subtitle: str, accent: str, toolti
     st.markdown(f"""
     <div class="scanner-card" style="--accent: {accent};">
         <div class="scanner-card-head">
-            <div class="scanner-card-icon-box">
-                <span class="scanner-card-icon-emoji">{icon}</span>
-            </div>
             <div class="scanner-card-titles">
                 <div class="scanner-card-title">{title}</div>
                 <div class="scanner-card-subtitle">{subtitle}</div>
@@ -2822,7 +2819,7 @@ def render_scanner_config():
             st.session_state.scanner_config_open = False
             st.rerun()
     with col_reset:
-        if st.button("🔄 Restablecer", key="scanner_reset_top",
+        if st.button("Restablecer", key="scanner_reset_top",
                      use_container_width=True,
                      help="Volver a los filtros por defecto"):
             st.session_state.scanner_filters = dict(SCANNER_DEFAULTS)
@@ -2849,7 +2846,6 @@ def render_scanner_config():
         st.markdown('<div class="scanner-pri-anchor"></div>', unsafe_allow_html=True)
         st.markdown("""
         <div class="scanner-pri-header">
-            <span class="scanner-pri-icon">🏭</span>
             <div class="scanner-pri-titles">
                 <div class="scanner-pri-title">Sectores de interés</div>
                 <div class="scanner-pri-subtitle">Elige uno o varios — sin selección = todos los sectores</div>
@@ -2877,8 +2873,7 @@ def render_scanner_config():
                 with row_cols[i]:
                     active = opt["key"] in (sf.get("sectors") or [])
                     btn_type = "primary" if active else "secondary"
-                    icon = opt.get("icon", "")
-                    label = f"{icon}  {opt['label']}" if icon else opt["label"]
+                    label = opt["label"]   # sin emoji: solo el nombre del sector
                     if st.button(label, key=f"sec_top_{opt['key']}", type=btn_type,
                                  use_container_width=True):
                         current = list(sf.get("sectors") or [])
@@ -3054,7 +3049,7 @@ def render_scanner_config():
         with st.container():
             st.markdown('<div class="ejecutar-glow-anchor"></div>',
                         unsafe_allow_html=True)
-            if st.button("🚀 Ejecutar búsqueda", key="scanner_run",
+            if st.button("Ejecutar búsqueda", key="scanner_run",
                          use_container_width=True, type="primary"):
                 tech_filters = build_screener_filters(sf)
                 st.session_state.scanner_config_open = False
@@ -3136,14 +3131,14 @@ def render_quick_view(ticker: str):
     col_chart, col_metrics = st.columns([2, 1], gap="medium")
 
     with col_chart:
-        st.markdown('<div class="qv-section-title">📈 PRECIO 6 MESES</div>', unsafe_allow_html=True)
+        st.markdown('<div class="qv-section-title">PRECIO 6 MESES</div>', unsafe_allow_html=True)
         from dashboard.charts import build_quick_chart
         fig = build_quick_chart(df, ticker)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
                         key=f"chart_quickview_price_{ticker}")
 
     with col_metrics:
-        st.markdown('<div class="qv-section-title">📊 MÉTRICAS CLAVE</div>', unsafe_allow_html=True)
+        st.markdown('<div class="qv-section-title">MÉTRICAS CLAVE</div>', unsafe_allow_html=True)
 
         mcap = info.get("market_cap", 0) or 0
         if mcap >= 1e12:
@@ -3189,7 +3184,7 @@ def render_quick_view(ticker: str):
             """, unsafe_allow_html=True)
 
     # ── Row 2: Performance multi-timeframe ───────────────────────────
-    st.markdown('<div class="qv-section-title" style="margin-top:8px;">⚡ PERFORMANCE</div>', unsafe_allow_html=True)
+    st.markdown('<div class="qv-section-title" style="margin-top:8px;">PERFORMANCE</div>', unsafe_allow_html=True)
     perf_cols = st.columns(6, gap="small")
     range_pct = ((current_price - low_52w) / (high_52w - low_52w) * 100) if (high_52w - low_52w) > 0 else 50
 
@@ -3229,21 +3224,20 @@ def render_quick_view(ticker: str):
     col_news, col_ctx = st.columns([2, 1], gap="medium")
 
     with col_news:
-        st.markdown('<div class="qv-section-title" style="margin-top:14px;">📰 NOTICIAS RECIENTES</div>', unsafe_allow_html=True)
+        st.markdown('<div class="qv-section-title" style="margin-top:14px;">NOTICIAS RECIENTES</div>', unsafe_allow_html=True)
         if news:
             for item in news[:5]:
                 publisher = item.get("publisher", "—")
                 title = item.get("title", "")
                 age = item.get("age_hours", 0) or 0
                 age_label = f"{age:.0f}h" if age < 48 else f"{age/24:.0f}d"
-                freshness_emoji = "🔥" if age < 24 else "⚡" if age < 168 else "📅"
                 link = item.get("link", "#")
 
                 st.markdown(f"""
                 <a href="{link}" target="_blank" class="qv-news-link">
                 <div class="qv-news-item">
                     <div class="qv-news-meta">
-                        <span class="qv-news-freshness">{freshness_emoji} {age_label}</span>
+                        <span class="qv-news-freshness">{age_label}</span>
                         <span class="qv-news-publisher">{publisher}</span>
                     </div>
                     <div class="qv-news-title">{title}</div>
@@ -3254,7 +3248,7 @@ def render_quick_view(ticker: str):
             st.markdown('<div class="qv-empty">Sin noticias recientes disponibles</div>', unsafe_allow_html=True)
 
     with col_ctx:
-        st.markdown('<div class="qv-section-title" style="margin-top:14px;">🏭 CONTEXTO</div>', unsafe_allow_html=True)
+        st.markdown('<div class="qv-section-title" style="margin-top:14px;">CONTEXTO</div>', unsafe_allow_html=True)
 
         sector = info.get("sector", "—") or "—"
         industry = info.get("industry", "—") or "—"
@@ -3295,7 +3289,7 @@ def render_quick_view(ticker: str):
         _, cta_col, _ = st.columns([1, 2, 1])
         with cta_col:
             if st.button(
-                f"🔍  EJECUTAR ANÁLISIS DLP DE {ticker}",
+                f"EJECUTAR ANÁLISIS DLP DE {ticker}",
                 use_container_width=True,
                 key="qv_full_analysis",
                 type="primary",
@@ -3338,9 +3332,9 @@ def render_welcome():
         # 30% más de ancho porque su texto es más largo. Garantiza que quepa.
         btn_col1, btn_col2 = st.columns([1, 1.3], gap="small")
         with btn_col1:
-            analyze_btn = st.button("🔍  Análisis DLP", use_container_width=True, key="hero_analyze", type="primary")
+            analyze_btn = st.button("Análisis DLP", use_container_width=True, key="hero_analyze", type="primary")
         with btn_col2:
-            scan_btn = st.button("🌐  Escanear el Mercado", use_container_width=True, key="hero_scan", type="primary")
+            scan_btn = st.button("Escanear el Mercado", use_container_width=True, key="hero_scan", type="primary")
 
         if analyze_btn and ticker_input:
             # Validar el ticker ANTES de gastar créditos de Anthropic.
@@ -3434,7 +3428,7 @@ def render_welcome():
                     st.rerun()
 
     # ── Live Market Pulse ─────────────────────────────────────────────
-    st.markdown('<div class="section-header">📡  Live Market Pulse</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-header">Live Market Pulse</div>', unsafe_allow_html=True)
 
     # Spinner mientras cargan los datos macro (~2-5s — el más lento)
     macro_loader = st.empty()
@@ -3510,7 +3504,7 @@ def render_welcome():
     # ── Sector Performance ─────────────────────────────────────────────
     sector_perf = macro.get("sector_performance", {}) if macro else {}
     if sector_perf:
-        st.markdown('<div class="section-header">🌍  Rotación Sectorial (1Y)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-header">Rotación Sectorial (1Y)</div>', unsafe_allow_html=True)
 
         # Spinner independiente mientras se construye el heatmap de Plotly
         # (~200-500ms) — feedback visual consistente con las otras 2 secciones.
@@ -3606,7 +3600,7 @@ def main():
     rec_badge = get_recommendation_badge(analysis.recommendation)
     score = analysis.composite_score
     color = score_color(score)
-    compound_badge = ('<span class="compound-machine-badge">💎 COMPOUNDER</span>'
+    compound_badge = ('<span class="compound-machine-badge">COMPOUNDER</span>'
                       if getattr(analysis, "is_compound_machine", False) else "")
 
     st.markdown(

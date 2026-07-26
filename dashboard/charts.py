@@ -21,6 +21,25 @@ PURPLE   = "#9D8CE0"                     # dato categórico
 YELLOW   = "#F0C878"                     # --accent-hi
 WHITE    = "#F2F3F5"                     # --text-hi
 
+
+def _score_color(s) -> str:
+    """Color de un puntaje 0-100 en la MISMA escala del termómetro
+    (rojo→ámbar→verde, de peor a mejor). Fuente única de verdad para todas las
+    barras que representan una CALIFICACIÓN."""
+    try:
+        s = float(s)
+    except (TypeError, ValueError):
+        return MUTED
+    if s >= 80:
+        return "#3DD68C"   # --pos
+    if s >= 65:
+        return "#63DFA3"
+    if s >= 50:
+        return "#E2B25C"   # --accent
+    if s >= 35:
+        return "#E0854E"
+    return "#F1495F"       # --neg
+
 PLOTLY_LAYOUT = dict(
     paper_bgcolor=BG_MAIN,
     plot_bgcolor=BG_MAIN,
@@ -424,11 +443,11 @@ def build_snowflake(snowflake: dict) -> go.Figure:
     Radar chart estilo SimplyWallSt: 5 dimensiones de calidad (0-20 cada una).
     """
     categories = {
-        "value":    "💰 Valor",
-        "quality":  "🏆 Calidad",
-        "growth":   "📈 Crecimiento",
-        "momentum": "⚡ Momentum",
-        "future":   "🔭 Futuro",
+        "value":    "Valor",
+        "quality":  "Calidad",
+        "growth":   "Crecimiento",
+        "momentum": "Momentum",
+        "future":   "Futuro",
     }
 
     labels = [categories.get(k, k) for k in ["value", "quality", "growth", "momentum", "future"]]
@@ -448,7 +467,7 @@ def build_snowflake(snowflake: dict) -> go.Figure:
         fill_color = "rgba(255,59,92,0.15)"
         line_color = RED
 
-    # Labels combinados: "🏆 Calidad · 19" — el valor queda al lado del label en el outer ring
+    # Labels combinados: "Calidad · 19" — el valor queda al lado del label en el outer ring
     combined = [f"{labels[i]}  <b>{int(values[i])}</b>" for i in range(len(labels))]
     combined_closed = combined + [combined[0]]
 
@@ -521,15 +540,19 @@ def build_snowflake(snowflake: dict) -> go.Figure:
 def build_score_breakdown(score_breakdown: dict) -> go.Figure:
     """Desglose horizontal premium: barras con gradiente, zonas de calidad, sin tonterías."""
 
+    # Prefijo = el MISMO código de sección que su pestaña (FN, TC, FU…), en oro,
+    # en lugar de un emoji. Refleja el badge que aparece dentro de cada sección.
+    def _lbl(code, name):
+        return f"<span style='color:#E2B25C'><b>{code}</b></span>  {name}"
     agent_display = {
-        "fundamentals":  "📊  Fundamentales",
-        "technical":     "📈  Técnico",
-        "future":        "🔭  Futuro",
-        "institutional": "🏦  Smart Money",
-        "catalysts":     "⚡  Catalizadores",
-        "macro":         "🌍  Macro",
-        "sentiment":     "📰  Sentimiento",
-        "risk":          "⚖️  Riesgo",
+        "fundamentals":  _lbl("FN", "Fundamentales"),
+        "technical":     _lbl("TC", "Técnico"),
+        "future":        _lbl("FU", "Futuro"),
+        "institutional": _lbl("SM", "Smart Money"),
+        "catalysts":     _lbl("CT", "Catalizadores"),
+        "macro":         _lbl("MC", "Macro"),
+        "sentiment":     _lbl("SN", "Sentimiento"),
+        "risk":          _lbl("RS", "Riesgo"),
     }
     order = ["fundamentals", "technical", "future", "institutional",
              "catalysts", "macro", "sentiment", "risk"]
@@ -537,14 +560,8 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
     names  = [agent_display[k] for k in order]
     scores = [float(score_breakdown.get(k, 50)) for k in order]
 
-    def color_for(s):
-        if s >= 80: return "#3DD68C"
-        if s >= 65: return "#63DFA3"
-        if s >= 50: return "#E2B25C"
-        if s >= 35: return "#E0854E"
-        return "#F1495F"
-
-    bar_colors = [color_for(s) for s in scores]
+    # Misma escala del termómetro que el resto de barras de calificación.
+    bar_colors = [_score_color(s) for s in scores]
 
     fig = go.Figure()
 
@@ -782,23 +799,42 @@ def build_rsi_gauge(rsi: float, height: int = 200) -> go.Figure:
 
 
 def build_metric_bars(items: list, height: int = 220, title: str = "",
-                      x_format: str = "%", x_zero_line: bool = True) -> go.Figure:
+                      x_format: str = "%", x_zero_line: bool = True,
+                      color_by_score: bool = False) -> go.Figure:
     """Bar chart horizontal genérico para métricas comparativas.
-    items = [(label, value, color)]"""
+    items = [(label, value, color)]
+
+    color_by_score=True → IGNORA el color fijo de cada item y pinta la barra
+    según la escala del TERMÓMETRO (rojo → ámbar → verde, 0-100), igual que el
+    resto de calificaciones de la app. Además dibuja un riel de fondo 0→100 para
+    que se lea como una barra de progreso. Se usa en los sub-scores de
+    Fundamentales y Futuro. Con el valor por defecto (False) el comportamiento
+    es EXACTAMENTE el de siempre (gráficas del análisis técnico intactas)."""
     if not items:
         return go.Figure()
 
     labels = [i[0] for i in items]
     values = [i[1] if isinstance(i[1], (int, float)) else 0 for i in items]
-    colors = [i[2] for i in items]
+    colors = [_score_color(v) for v in values] if color_by_score else [i[2] for i in items]
 
-    text_format = "%{x:+.2f}%" if x_format == "%" else "%{x:.2f}"
     text_vals = [
-        (f"{v:+.2f}%" if x_format == "%" else f"{v:.2f}") if isinstance(v, (int, float)) else "—"
+        (f"{v:+.2f}%" if x_format == "%" else f"{v:.0f}" if color_by_score
+         else f"{v:.2f}") if isinstance(v, (int, float)) else "—"
         for v in values
     ]
 
-    fig = go.Figure(go.Bar(
+    fig = go.Figure()
+
+    # Riel de fondo (solo en modo calificación): 0→100 tenue, para que se vea
+    # cuánto falta hasta el máximo.
+    if color_by_score:
+        fig.add_trace(go.Bar(
+            y=labels, x=[100] * len(labels), orientation="h",
+            marker=dict(color="rgba(255,255,255,0.035)", line=dict(width=0)),
+            width=0.62, showlegend=False, hoverinfo="skip",
+        ))
+
+    bar_kwargs = dict(
         y=labels,
         x=values,
         orientation="h",
@@ -807,10 +843,22 @@ def build_metric_bars(items: list, height: int = 220, title: str = "",
         text=text_vals,
         textposition="outside",
         textfont=dict(size=10, color=TEXT, family="JetBrains Mono"),
-    ))
+    )
+    if color_by_score:
+        # Barra algo más fina que el riel + etiqueta sin recortar contra el eje.
+        bar_kwargs.update(width=0.62, showlegend=False, cliponaxis=False,
+                          hovertemplate="<b>%{y}</b><br>%{x:.0f}<extra></extra>")
+    fig.add_trace(go.Bar(**bar_kwargs))
 
-    if x_zero_line:
+    if x_zero_line and not color_by_score:
         fig.add_vline(x=0, line_color=MUTED, line_width=1, opacity=0.5)
+
+    xaxis = dict(gridcolor=GRID, tickfont=dict(color=MUTED, size=9), zerolinecolor=MUTED,
+                 ticksuffix=("%" if x_format == "%" else ""))
+    if color_by_score:
+        # Escala fija 0-108 para que el riel completo y las etiquetas quepan.
+        xaxis.update(range=[0, 108], gridcolor="rgba(0,0,0,0)", zeroline=False,
+                     tickvals=[0, 25, 50, 65, 80, 100])
 
     fig.update_layout(
         paper_bgcolor=BG_MAIN,
@@ -818,10 +866,11 @@ def build_metric_bars(items: list, height: int = 220, title: str = "",
         font=dict(color=TEXT, family="Inter", size=11),
         height=height,
         showlegend=False,
+        # overlay: el riel y la barra comparten fila en vez de ponerse en paralelo.
+        barmode="overlay",
         margin=dict(l=10, r=60, t=40 if title else 10, b=10),
         title=dict(text=f"<b>{title}</b>", font=dict(color=MUTED, size=11), x=0) if title else None,
-        xaxis=dict(gridcolor=GRID, tickfont=dict(color=MUTED, size=9), zerolinecolor=MUTED,
-                   ticksuffix=("%" if x_format == "%" else "")),
+        xaxis=xaxis,
         yaxis=dict(gridcolor="rgba(0,0,0,0)", tickfont=dict(color=TEXT, size=10), zerolinecolor=GRID),
     )
     return fig
