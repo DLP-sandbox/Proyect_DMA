@@ -903,11 +903,21 @@ def compute_quality_ratios(info: dict, financials: dict) -> dict:
         if ca and cl and cl > 0:
             ratios["current_ratio"] = ca / cl
 
-    # Debt/Equity: preferir YF directo (coincide con lo que muestra Yahoo Finance)
+    # Debt/Equity SIEMPRE como RATIO (0.57 = deuda es 57% del patrimonio).
+    # yfinance devuelve `debtToEquity` en forma PORCENTUAL (57.6 = 0.576 de
+    # ratio), por eso antes se veía "57.6" en vez de "0.58" y el color (umbrales
+    # 0.5/1.5, que son de RATIO) siempre salía rojo. Lo dividimos entre 100 para
+    # dejarlo como ratio, igual que la rama calculada desde el balance.
     de_yf = info.get("debt_equity_yf")
     if de_yf is not None:
-        ratios["debt_to_equity"] = float(de_yf)
-    elif debt and equity and equity > 0:
+        try:
+            _de = float(de_yf)
+            # Heurística: si viene >5 es porcentaje (57.6) → a ratio; si ya es
+            # pequeño (1.38) es ratio y se deja igual.
+            ratios["debt_to_equity"] = (_de / 100.0) if _de > 5 else _de
+        except (TypeError, ValueError):
+            pass
+    if "debt_to_equity" not in ratios and debt and equity and equity > 0:
         ratios["debt_to_equity"] = debt / equity
 
     # FCF growth
