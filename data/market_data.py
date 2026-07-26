@@ -400,6 +400,9 @@ _TV_TECH_FIELDS = [
     "price_52_week_high", "price_52_week_low",
     "Perf.1M", "Perf.3M", "Perf.6M", "Perf.Y",
     "MACD.macd", "MACD.signal", "Low.3M", "High.3M",
+    # Target de analistas (el MISMO campo que usa get_company_info, probado en
+    # Render): da un precio objetivo REAL sin depender de OHLCV.
+    "price_target_average",
 ]
 
 
@@ -463,6 +466,7 @@ def _tradingview_technical_snapshot(ticker: str) -> dict:
         ind["pct_from_52w_high"] = ((close / hi52 - 1) * 100) if hi52 else None
         ind["pct_from_52w_low"] = ((close / lo52 - 1) * 100) if lo52 else None
         ind["low_3m"] = f("Low.3M")
+        ind["analyst_target"] = f("price_target_average")   # target real de analistas
         ind["stage"] = _compute_stage(pd.Series([close]), ind)
         for k, label in [("Perf.6M", "6m"), ("Perf.3M", "3m"), ("Perf.1M", "1m"), ("Perf.Y", "1y")]:
             v = f(k)
@@ -508,8 +512,13 @@ def get_risk_levels(ticker: str, indicators: dict = None) -> dict:
         stop_atr = price - 2.0 * atr
         stop = max([s for s in (stop_swing, stop_atr) if s is not None] or [stop_atr])
         stop = min(stop, price * 0.99)   # nunca por encima del precio
-        # Target: 52W high si hay recorrido; si ya está cerca, +25%.
-        target = hi52 if price < hi52 * 0.85 else price * 1.25
+        # Target: 1º el target REAL de analistas (TradingView, funciona en Render)
+        # si implica subida; si no, el máximo de 52 semanas / +25%.
+        analyst = ind.get("analyst_target")
+        if analyst and analyst > price * 1.02:
+            target = analyst
+        else:
+            target = hi52 if price < hi52 * 0.85 else price * 1.25
         risk = (price - stop) / price * 100
         reward = (target - price) / price * 100
         rr = (reward / risk) if risk > 0 else 0
