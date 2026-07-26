@@ -843,6 +843,14 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
     gap: 4px !important;
 }
 
+/* Menú de pestañas centrado en la app. ÚNICO cambio: la alineación horizontal.
+   El contenedor flex REAL es [data-baseweb="tab-list"] — el "> div:first-child"
+   de arriba es un wrapper, centrar ahí no haría nada. */
+[data-testid="stTabs"] [data-baseweb="tab-list"],
+[data-testid="stTabs"] [role="tablist"] {
+    justify-content: center !important;
+}
+
 button[data-baseweb="tab"] {
     color: var(--text-2) !important;
     font-family: var(--font-ui) !important;
@@ -888,6 +896,17 @@ button[data-baseweb="tab"]:hover {
 [data-testid="stTextInput"] input:focus {
     border-color: rgba(var(--accent-rgb),0.6) !important;
     box-shadow: 0 0 0 3px rgba(var(--accent-rgb),0.12) !important;
+}
+
+/* Buscador de ticker: SIEMPRE en mayúsculas mientras se escribe, aunque el
+   usuario teclee en minúscula. Es solo presentación (el valor que recibe Python
+   ya se normaliza con .upper()). El placeholder se deja en su capitalización
+   original para que siga siendo legible. */
+.st-key-hero_ticker_input input {
+    text-transform: uppercase !important;
+}
+.st-key-hero_ticker_input input::placeholder {
+    text-transform: none !important;
 }
 
 /* ── Botones genéricos: secundario silencioso con press físico ────── */
@@ -3089,6 +3108,12 @@ section[data-testid="stSidebar"] {
         flex-wrap: nowrap !important;
         scrollbar-width: thin !important;
         -webkit-overflow-scrolling: touch !important;
+    }
+    /* En estrecho, las pestañas se desplazan en horizontal: si además se
+       centraran, la primera quedaría inalcanzable al hacer scroll. */
+    [data-testid="stTabs"] [data-baseweb="tab-list"],
+    [data-testid="stTabs"] [role="tablist"] {
+        justify-content: flex-start !important;
     }
     [data-testid="stTabs"] button[data-baseweb="tab"] {
         padding: 8px 12px !important;
