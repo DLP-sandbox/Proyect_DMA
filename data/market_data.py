@@ -280,15 +280,25 @@ def get_price_history(ticker: str, period: str = "2y", interval: str = "1d") -> 
             pass
 
     df = pd.DataFrame()
-    try:
-        df = _yt(ticker).history(period=period, interval=interval, auto_adjust=True)
-    except Exception:
-        df = pd.DataFrame()
+    # Interruptor de PRUEBA: DLP_FORCE_TRADINGVIEW=1 simula producción (Yahoo y
+    # Nasdaq bloqueados) → fuerza el respaldo de TradingView. Útil para verificar
+    # en localhost que los datos llegan igual que en Render. Sin la variable, todo
+    # funciona normal (yfinance → Nasdaq → TradingView).
+    import os as _os
+    if not _os.environ.get("DLP_FORCE_TRADINGVIEW"):
+        try:
+            df = _yt(ticker).history(period=period, interval=interval, auto_adjust=True)
+        except Exception:
+            df = pd.DataFrame()
 
-    # Respaldo Nasdaq cuando yfinance no trae nada (típico en cloud).
-    if df is None or df.empty:
-        df = _get_price_history_from_nasdaq(ticker, period, interval)
+        # Respaldo Nasdaq cuando yfinance no trae nada (típico en cloud).
+        if df is None or df.empty:
+            df = _get_price_history_from_nasdaq(ticker, period, interval)
 
+    # Sin OHLCV (ni yfinance ni Nasdaq, o el toggle de prueba): devolvemos vacío
+    # a propósito → get_technical_indicators / get_risk_levels / RS caen a
+    # TradingView, que SÍ responde en cloud. La gráfica de velas se salta (no hay
+    # histórico puntual en TV), pero todos los NÚMEROS quedan reales.
     if df is None or df.empty:
         return pd.DataFrame()
 
@@ -378,6 +388,142 @@ def _get_price_history_from_nasdaq(ticker: str, period: str = "2y", interval: st
 
 def get_weekly_history(ticker: str, period: str = "3y") -> pd.DataFrame:
     return get_price_history(ticker, period=period, interval="1wk")
+
+
+# ── Snapshot técnico vía TradingView (fuente INFALIBLE en cloud) ───────────
+# TradingView (tradingview-screener) es la MISMA fuente del escáner, que ya
+# funciona en Render "sin rate limit en cloud". Yahoo la puede bloquear pero
+# TradingView NO. Da valores puntuales (no OHLCV histórico), suficientes para
+# reconstruir TODOS los indicadores que la UI y el riesgo necesitan.
+_TV_TECH_FIELDS = [
+    "close", "SMA20", "SMA50", "SMA100", "SMA200", "RSI", "ATR",
+    "price_52_week_high", "price_52_week_low",
+    "Perf.1M", "Perf.3M", "Perf.6M", "Perf.Y",
+    "MACD.macd", "MACD.signal", "Low.3M", "High.3M",
+]
+
+
+def _tv_row(ticker: str) -> dict:
+    """Una fila de TradingView con campos técnicos para `ticker` (o {}).
+    Prueba el ticker tal cual y su variante con punto (clases: BRK-B→BRK.B)."""
+    variants = [ticker.upper()]
+    if "-" in ticker:
+        variants.append(ticker.upper().replace("-", "."))
+    for tk in variants:
+        try:
+            from tradingview_screener import Query, col
+            _, df = (Query().select(*_TV_TECH_FIELDS)
+                     .where(col("name") == tk).limit(1).get_scanner_data())
+            if df is not None and not df.empty:
+                return df.iloc[0].to_dict()
+        except Exception:
+            continue
+    return {}
+
+
+def _tradingview_technical_snapshot(ticker: str) -> dict:
+    """Reconstruye el dict de indicadores (mismas claves que
+    compute_technical_indicators) a partir de los valores puntuales de
+    TradingView. {} si no hay datos. NUNCA lanza."""
+    r = _tv_row(ticker)
+    if not r:
+        return {}
+    try:
+        def f(k):
+            v = r.get(k)
+            try:
+                v = float(v)
+                return v if v == v else None
+            except (TypeError, ValueError):
+                return None
+
+        close = f("close")
+        if not close:
+            return {}
+        ind = {"current_price": close}
+        sma20, sma50, sma100, sma200 = f("SMA20"), f("SMA50"), f("SMA100"), f("SMA200")
+        # TradingView no expone SMA150 → se aproxima con (SMA100+SMA200)/2
+        sma150 = ((sma100 + sma200) / 2.0) if (sma100 and sma200) else None
+        for n, ma in [(20, sma20), (50, sma50), (150, sma150), (200, sma200)]:
+            ind[f"sma_{n}"] = ma
+            ind[f"price_vs_sma{n}_pct"] = ((close / ma - 1) * 100) if ma else None
+        ind["rsi_14"] = f("RSI")
+        macd, sig = f("MACD.macd"), f("MACD.signal")
+        if macd is not None:
+            ind["macd"] = macd
+            ind["macd_signal"] = sig
+            ind["macd_hist"] = (macd - sig) if sig is not None else None
+        atr = f("ATR")
+        if atr is not None:
+            ind["atr_14"] = atr
+            ind["atr_pct"] = atr / close * 100
+        hi52, lo52 = f("price_52_week_high"), f("price_52_week_low")
+        ind["52w_high"] = hi52
+        ind["52w_low"] = lo52
+        ind["pct_from_52w_high"] = ((close / hi52 - 1) * 100) if hi52 else None
+        ind["pct_from_52w_low"] = ((close / lo52 - 1) * 100) if lo52 else None
+        ind["low_3m"] = f("Low.3M")
+        ind["stage"] = _compute_stage(pd.Series([close]), ind)
+        for k, label in [("Perf.6M", "6m"), ("Perf.3M", "3m"), ("Perf.1M", "1m"), ("Perf.Y", "1y")]:
+            v = f(k)
+            if v is not None:
+                ind[f"return_{label}"] = v
+        ind["_source"] = "tradingview"
+        return ind
+    except Exception:
+        return {}
+
+
+def get_technical_indicators(ticker: str, df: pd.DataFrame = None) -> dict:
+    """Indicadores técnicos con cadena de respaldo INFALIBLE:
+    1) OHLCV (yfinance → Nasdaq) + compute_technical_indicators.
+    2) Si viene vacío (Yahoo Y Nasdaq bloqueados en cloud) → snapshot de
+       TradingView, que sí responde en Render. Así Stage, 52W, MA, RSI, ATR
+       SIEMPRE tienen datos reales, en localhost y en producción."""
+    if df is None:
+        df = get_price_history(ticker, period="2y")
+    if df is not None and not df.empty:
+        ind = compute_technical_indicators(df)
+        if ind:
+            return ind
+    return _tradingview_technical_snapshot(ticker)
+
+
+def get_risk_levels(ticker: str, indicators: dict = None) -> dict:
+    """Niveles de riesgo (entrada/stop/target/ATR/RR) SIEMPRE calculables, con
+    la misma metodología que el agente de riesgo pero a prueba de bloqueos:
+    usa indicadores reales (OHLCV o TradingView). {} si no hay ni precio."""
+    ind = indicators or get_technical_indicators(ticker)
+    if not ind:
+        return {}
+    try:
+        price = ind.get("current_price")
+        if not price:
+            return {}
+        atr = ind.get("atr_14") or (price * 0.03)
+        hi52 = ind.get("52w_high") or (price * 1.25)
+        # Stop: mínimo reciente (Low.3M) 2% abajo, o 2×ATR bajo el precio.
+        low_ref = ind.get("low_3m")
+        stop_swing = (low_ref * 0.98) if low_ref else None
+        stop_atr = price - 2.0 * atr
+        stop = max([s for s in (stop_swing, stop_atr) if s is not None] or [stop_atr])
+        stop = min(stop, price * 0.99)   # nunca por encima del precio
+        # Target: 52W high si hay recorrido; si ya está cerca, +25%.
+        target = hi52 if price < hi52 * 0.85 else price * 1.25
+        risk = (price - stop) / price * 100
+        reward = (target - price) / price * 100
+        rr = (reward / risk) if risk > 0 else 0
+        return {
+            "current_price": round(price, 2),
+            "stop": round(stop, 2),
+            "target": round(target, 2),
+            "atr_pct": round(atr / price * 100, 2),
+            "risk_pct": round(risk, 1),
+            "reward_pct": round(reward, 1),
+            "rr": round(rr, 2),
+        }
+    except Exception:
+        return {}
 
 
 # ── Precio en vivo (siempre fresco — TTL 60 segundos) ────────────────────
@@ -927,7 +1073,32 @@ def get_relative_strength(ticker: str, benchmark: str = "SPY", period: str = "1y
 
     result = {"rs_score": 50, "rs_6m": None, "rs_3m": None, "rs_1m": None}
 
-    if stock_data.empty or spy_data.empty:
+    # Respaldo INFALIBLE: si no hay OHLCV (Yahoo+Nasdaq bloqueados en cloud),
+    # el RS se calcula con los Perf de TradingView (acción vs SPY). Funciona en
+    # Render igual que el escáner.
+    if stock_data.empty or spy_data.empty or len(stock_data.index.intersection(spy_data.index)) < 20:
+        try:
+            st = _tv_row(ticker)
+            bm = _tv_row(benchmark)
+            if st and bm:
+                def perf(row, k):
+                    try:
+                        v = float(row.get(k))
+                        return v if v == v else None
+                    except (TypeError, ValueError):
+                        return None
+                for tvk, rsk in [("Perf.1M", "rs_1m"), ("Perf.3M", "rs_3m"), ("Perf.6M", "rs_6m")]:
+                    a, b = perf(st, tvk), perf(bm, tvk)
+                    if a is not None and b is not None:
+                        result[rsk] = float(a - b)
+                a12, b12 = perf(st, "Perf.Y"), perf(bm, "Perf.Y")
+                if a12 is not None and b12 is not None:
+                    result["rs_composite"] = float(a12 - b12)
+                if result.get("rs_6m") is not None:
+                    _save_cache(key, result)
+                    return result
+        except Exception:
+            pass
         return result
 
     # Alinear fechas

@@ -1305,13 +1305,22 @@ def render_overview(analysis: StockAnalysis):
             # current_price con el precio en vivo (TTL 60s); si no está
             # disponible, cae al entry_price persistido (mismo patrón que ya usan
             # la gráfica R/R del Overview y la pestaña de Riesgo).
-            from data.market_data import get_company_info
+            from data.market_data import get_company_info, get_risk_levels
             _live_info = get_company_info(analysis.ticker) or {}
-            _current_price = _live_info.get("current_price") or analysis.entry_price
+            _current_price = _safe_num(_live_info.get("current_price")) or _safe_num(analysis.entry_price)
+            _target = _safe_num(analysis.target_price)
+            rr_num  = _safe_num(str(analysis.risk_reward or "").split(":")[0]) if analysis.risk_reward else None
+            # Respaldo INFALIBLE: si el análisis cacheado no trae precio/target/RR
+            # (datos bloqueados al generarse), se recalculan frescos (OHLCV o TradingView).
+            if _target is None or _current_price is None or rr_num is None:
+                _fr = get_risk_levels(analysis.ticker)
+                if _fr:
+                    _current_price = _current_price or _fr.get("current_price")
+                    _target = _target or _fr.get("target")
+                    rr_num  = rr_num  or _fr.get("rr")
             entry_str  = f"${_current_price:.2f}"  if _current_price else "—"
-            target_str = f"${analysis.target_price:.2f}" if analysis.target_price else "—"
-            rr_str     = _extract_rr_ratio(analysis.risk_reward)
-            rr_num     = _safe_num(str(analysis.risk_reward or "").split(":")[0]) if analysis.risk_reward else None
+            target_str = f"${_target:.2f}" if _target else "—"
+            rr_str     = (f"{rr_num:.1f}:1" if rr_num else _extract_rr_ratio(analysis.risk_reward))
             sizing_str = _extract_percent(analysis.position_size_pct) if analysis.position_size_pct else "—"
             sizing_num = _safe_num(sizing_str)
 
@@ -1440,17 +1449,23 @@ def render_overview(analysis: StockAnalysis):
             """, unsafe_allow_html=True)
 
     # Risk/Reward visual — usando PRECIO ACTUAL de yfinance como referencia
+    from data.market_data import get_company_info, get_risk_levels
+    info_live = get_company_info(analysis.ticker) or {}
+    _ov_price  = _safe_num(info_live.get("current_price")) or _safe_num(analysis.entry_price)
     _ov_stop   = _safe_num(analysis.stop_loss)
     _ov_target = _safe_num(analysis.target_price)
-    if _ov_stop and _ov_target:
-        from data.market_data import get_company_info
-        info_live = get_company_info(analysis.ticker) or {}
-        _ov_price = _safe_num(info_live.get("current_price")) or _safe_num(analysis.entry_price)
-        if _ov_price:
-            st.markdown("---")
-            fig = build_rr_chart(_ov_price, _ov_stop, _ov_target, analysis.ticker)
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
-                            key=f"chart_overview_rr_{analysis.ticker}")
+    # Respaldo infalible si faltan niveles (análisis cacheado con datos bloqueados)
+    if _ov_stop is None or _ov_target is None or _ov_price is None:
+        _fr = get_risk_levels(analysis.ticker)
+        if _fr:
+            _ov_price  = _ov_price  or _fr.get("current_price")
+            _ov_stop   = _ov_stop   or _fr.get("stop")
+            _ov_target = _ov_target or _fr.get("target")
+    if _ov_price and _ov_stop and _ov_target:
+        st.markdown("---")
+        fig = build_rr_chart(_ov_price, _ov_stop, _ov_target, analysis.ticker)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+                        key=f"chart_overview_rr_{analysis.ticker}")
 
 
 # ── Technical Tab ─────────────────────────────────────────────────────────
@@ -1464,9 +1479,11 @@ def render_technical(analysis: StockAnalysis):
     _render_agent_header(tech_report)
 
     # ── Gráfica principal (candlestick + MAs + RSI + MACD + Volumen) ──
-    from data.market_data import get_price_history, compute_technical_indicators
+    from data.market_data import get_price_history, get_technical_indicators
     df = get_price_history(analysis.ticker, period="2y")
-    indicators = compute_technical_indicators(df) if not df.empty else {}
+    # Indicadores con respaldo INFALIBLE (OHLCV → TradingView): Stage, 52W, MA,
+    # RSI, ATR SIEMPRE con datos reales, aunque Yahoo/Nasdaq estén bloqueados.
+    indicators = get_technical_indicators(analysis.ticker, df)
 
     # ── MODO DE ANÁLISIS ───────────────────────────────────────────────────
     # Un único control, centrado y protagonista, con dos modos:
@@ -2424,12 +2441,23 @@ def render_risk(analysis: StockAnalysis):
 
     # Recalcular Pérdida Máxima y Ganancia Potencial usando el PRECIO ACTUAL en vivo
     # (más útil que el entry hipotético del agente)
-    from data.market_data import get_company_info
+    from data.market_data import get_company_info, get_risk_levels
     info_live = get_company_info(analysis.ticker) or {}
     # nan-safe: _safe_num descarta NaN/None → nunca "+nan%"
     current_price = _safe_num(info_live.get("current_price")) or _safe_num(analysis.entry_price)
     stop_lvl   = _safe_num(analysis.stop_loss)
     target_lvl = _safe_num(analysis.target_price)
+
+    # Respaldo INFALIBLE: si el análisis cacheado no trae niveles reales (se
+    # generó con los datos bloqueados), los recalculamos FRESCOS con la misma
+    # metodología (precio + ATR + máximo de 52 semanas), vía OHLCV o TradingView.
+    if stop_lvl is None or target_lvl is None or current_price is None or vol is None:
+        _fresh = get_risk_levels(analysis.ticker)
+        if _fresh:
+            current_price = current_price or _fresh.get("current_price")
+            stop_lvl      = stop_lvl      or _fresh.get("stop")
+            target_lvl    = target_lvl    or _fresh.get("target")
+            vol           = vol           or _fresh.get("atr_pct")
 
     downside = None
     upside = None
