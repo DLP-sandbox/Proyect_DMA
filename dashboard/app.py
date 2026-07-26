@@ -34,6 +34,7 @@ from dashboard.charts import (
     build_sector_heatmap, build_compact_gauge, build_rsi_gauge,
     build_metric_bars, build_earnings_history_chart,
     build_sentiment_gauge, build_holders_bars, build_mountain_chart,
+    STATIC_CHART_CONFIG,
 )
 
 # ── Config de página ──────────────────────────────────────────────────────
@@ -45,6 +46,29 @@ st.set_page_config(
 )
 
 st.markdown(BLOOMBERG_CSS, unsafe_allow_html=True)
+
+
+# ── Render de gráficas: SIEMPRE bloqueadas ────────────────────────────────
+
+def _chart(fig, **kwargs):
+    """Dibuja una gráfica de Plotly BLOQUEADA: no se puede hacer zoom, ni
+    arrastrar, ni reencuadrar con doble clic, ni tocar los ejes.
+
+    Punto ÚNICO por el que pasan TODAS las gráficas de la app (tacómetros,
+    barras, velas, radar, heatmap…), así ninguna se queda suelta aunque su
+    builder monte el layout por su cuenta.
+
+    `dragmode=False` es lo que desactiva el zoom por arrastre; el resto lo cubre
+    STATIC_CHART_CONFIG. A propósito NO se usa `staticPlot`, que bloquearía
+    también el hover y perderíamos los tooltips con los datos. Ante cualquier
+    error se dibuja la figura igualmente: nunca rompe el render."""
+    try:
+        fig.update_layout(dragmode=False)
+    except Exception:
+        pass
+    kwargs.setdefault("use_container_width", True)
+    kwargs["config"] = STATIC_CHART_CONFIG
+    st.plotly_chart(fig, **kwargs)
 
 
 # ── State inicial ─────────────────────────────────────────────────────────
@@ -1255,7 +1279,7 @@ def render_overview(analysis: StockAnalysis):
 
     with col_gauge:
         fig = build_gauge(analysis.composite_score, analysis.recommendation)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+        _chart(fig, use_container_width=True,
                         key=f"chart_overview_gauge_{analysis.ticker}")
 
         # Badge de recomendación
@@ -1277,12 +1301,12 @@ def render_overview(analysis: StockAnalysis):
 
     with col_snow:
         fig = build_snowflake(analysis.snowflake)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+        _chart(fig, use_container_width=True,
                         key=f"chart_overview_snowflake_{analysis.ticker}")
 
     # Fila 2: Score breakdown full-width (debajo, con todo el ancho disponible)
     fig = build_score_breakdown(analysis.score_breakdown)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+    _chart(fig, use_container_width=True,
                     key=f"chart_overview_breakdown_{analysis.ticker}")
 
     st.markdown("---")
@@ -1468,7 +1492,7 @@ def render_overview(analysis: StockAnalysis):
     if _ov_price and _ov_stop and _ov_target:
         st.markdown("---")
         fig = build_rr_chart(_ov_price, _ov_stop, _ov_target, analysis.ticker)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+        _chart(fig, use_container_width=True,
                         key=f"chart_overview_rr_{analysis.ticker}")
 
 
@@ -1539,9 +1563,8 @@ def render_technical(analysis: StockAnalysis):
 
     fig = (build_mountain_chart(df, analysis.ticker) if is_line
            else build_price_chart(df, indicators, analysis.ticker))
-    st.plotly_chart(
+    _chart(
         fig, use_container_width=True,
-        config={"displayModeBar": False},
         key=f"chart_technical_price_{analysis.ticker}_{'line' if is_line else 'candles'}",
     )
 
@@ -1589,7 +1612,7 @@ def render_technical(analysis: StockAnalysis):
                 ma_items.append((f"vs SMA {n}", pct, bar_color))
         if ma_items:
             fig_ma = build_metric_bars(ma_items, height=220, title="DISTANCIA A MOVING AVERAGES")
-            st.plotly_chart(fig_ma, use_container_width=True, config={"displayModeBar": False},
+            _chart(fig_ma, use_container_width=True,
                             key=f"chart_technical_mas_{analysis.ticker}")
 
     with col_rs:
@@ -1612,7 +1635,7 @@ def render_technical(analysis: StockAnalysis):
                 rs_items.append((label, v, bar_color))
         if rs_items:
             fig_rs = build_metric_bars(rs_items, height=220, title="RELATIVE STRENGTH vs S&P 500")
-            st.plotly_chart(fig_rs, use_container_width=True, config={"displayModeBar": False},
+            _chart(fig_rs, use_container_width=True,
                             key=f"chart_technical_rs_{analysis.ticker}")
 
     # ── Señales alcistas / bajistas (cards) ──
@@ -1841,7 +1864,7 @@ def render_fundamentals(analysis: StockAnalysis):
         fig = build_metric_bars(sub_items, height=240,
                                 title="SUB-SCORES (0-100)", x_format="num",
                                 x_zero_line=False, color_by_score=True)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+        _chart(fig, use_container_width=True,
                         key=f"chart_fund_pillars_{analysis.ticker}")
 
     # ── Pros / Cons ──
@@ -1924,7 +1947,7 @@ def render_future(analysis: StockAnalysis):
         fig = build_metric_bars(sub_items, height=240,
                                 title="SUB-SCORES (0-100)", x_format="num",
                                 x_zero_line=False, color_by_score=True)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+        _chart(fig, use_container_width=True,
                         key=f"chart_future_pillars_{analysis.ticker}")
 
     # ── Pros / Cons ──
@@ -2008,7 +2031,7 @@ def render_institutional(analysis: StockAnalysis):
     top_inst = holders_raw.get("top_institutions") or []
     if top_inst:
         fig = build_holders_bars(top_inst)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+        _chart(fig, use_container_width=True,
                         key=f"chart_inst_holders_{analysis.ticker}")
 
     # ── Actividad reciente de directivos (Insiders) ─────────────────────────
@@ -2209,7 +2232,7 @@ def render_catalysts(analysis: StockAnalysis):
         st.markdown('<div class="section-title-bar">Track Record de Earnings</div>',
                     unsafe_allow_html=True)
         fig = build_earnings_history_chart(eh)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+        _chart(fig, use_container_width=True,
                         key=f"chart_catalysts_earn_{analysis.ticker}")
 
     # ── Top Catalyst destacado ──
@@ -2289,7 +2312,7 @@ def render_macro(analysis: StockAnalysis):
         st.markdown('<div class="section-title-bar">Rotación Sectorial (1Y)</div>',
                     unsafe_allow_html=True)
         fig = build_sector_heatmap(sector_perf)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+        _chart(fig, use_container_width=True,
                         key=f"chart_macro_sector_heatmap_{analysis.ticker}")
 
     # ── Snapshot de indicadores macro ──
@@ -2359,7 +2382,7 @@ def render_sentiment(analysis: StockAnalysis):
 
     with col_gauge:
         fig = build_sentiment_gauge(report.score, height=260)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+        _chart(fig, use_container_width=True,
                         key=f"chart_sent_gauge_{analysis.ticker}")
 
     with col_pills:
@@ -2503,7 +2526,7 @@ def render_risk(analysis: StockAnalysis):
         st.markdown('<div class="section-title-bar">Upside / Downside vs Precio Actual</div>',
                     unsafe_allow_html=True)
         fig = build_rr_chart(current_price, stop_lvl, target_lvl, analysis.ticker)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+        _chart(fig, use_container_width=True,
                         key=f"chart_risk_tab_rr_{analysis.ticker}")
 
     # ── Pros / Cons ──
@@ -3134,7 +3157,7 @@ def render_quick_view(ticker: str):
         st.markdown('<div class="qv-section-title">PRECIO 6 MESES</div>', unsafe_allow_html=True)
         from dashboard.charts import build_quick_chart
         fig = build_quick_chart(df, ticker)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+        _chart(fig, use_container_width=True,
                         key=f"chart_quickview_price_{ticker}")
 
     with col_metrics:
@@ -3522,7 +3545,7 @@ def render_welcome():
         # Quitar el spinner — vamos a renderizar el heatmap abajo
         sector_loader.empty()
 
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+        _chart(fig, use_container_width=True,
                         key="chart_welcome_sector_heatmap")
 
 

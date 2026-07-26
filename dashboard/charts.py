@@ -40,6 +40,22 @@ def _score_color(s) -> str:
         return "#E0854E"
     return "#F1495F"       # --neg
 
+# Config de Plotly para que NINGUNA gráfica sea manipulable: sin barra de
+# herramientas, sin zoom con la rueda, sin doble clic para reencuadrar y sin
+# tiradores en los ejes. Se combina con `dragmode=False` en la propia figura
+# (lo aplica _chart() en app.py), que es lo que bloquea el zoom por arrastre.
+# NO se usa staticPlot: eso mataría también el hover y los tooltips, que sí
+# queremos conservar.
+STATIC_CHART_CONFIG = {
+    "displayModeBar": False,
+    "displaylogo": False,
+    "scrollZoom": False,
+    "doubleClick": False,
+    "showAxisDragHandles": False,
+    "showAxisRangeEntryBoxes": False,
+    "editable": False,
+}
+
 PLOTLY_LAYOUT = dict(
     paper_bgcolor=BG_MAIN,
     plot_bgcolor=BG_MAIN,
