@@ -3623,13 +3623,13 @@ def main():
 
     # Tabs principales
     tabs = st.tabs([
-        "📊 Overview",
-        "📈 Técnico",
-        "💰 Fundamentales",
-        "🔭 Futuro",
-        "🏦 Smart Money",
-        "🌐 Contexto del Mercado",
-        "⚖️ Riesgo",
+        "Overview",
+        "Técnico",
+        "Fundamentales",
+        "Futuro",
+        "Smart Money",
+        "Contexto del Mercado",
+        "Riesgo",
     ])
 
     with tabs[0]:

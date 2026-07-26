@@ -836,11 +836,30 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
     background: rgba(var(--neg-rgb),0.06);
 }
 
-/* ── Tabs ────────────────────────────────────────────────────────────── */
+/* ── Tabs — menú centrado + separadores sutiles con brillo ──────────────
+   ⚠️ TRAMPA YA PAGADA: el contenedor flex REAL que sostiene los botones es
+   [data-baseweb="tab-list"], NO "> div:first-child" (ese es un wrapper).
+   Centrar o poner gap en el wrapper NO hace nada. */
 [data-testid="stTabs"] > div:first-child {
+    background: transparent !important;
+    border-bottom: none !important;   /* la línea la pinta el tab-list */
+}
+
+/* Centrado + aire + línea divisoria.
+   width:max-content + min-width:100% = si las pestañas caben, el contenedor
+   ocupa el 100% y quedan CENTRADAS; si no caben (móvil/Whop), el contenedor
+   crece con el contenido y el scroll empieza desde la primera pestaña (evita
+   el bug clásico de flex centrado + overflow: primer ítem inalcanzable). */
+[data-testid="stTabs"] [data-baseweb="tab-list"],
+[data-testid="stTabs"] [role="tablist"] {
+    display: flex !important;
+    justify-content: center !important;
+    gap: 0 !important;                            /* separadores equidistantes */
+    width: max-content !important;
+    min-width: 100% !important;
+    margin: 6px auto 22px !important;             /* aire arriba y respiro antes del contenido */
     border-bottom: 1px solid var(--hairline) !important;
     background: transparent !important;
-    gap: 4px !important;
 }
 
 button[data-baseweb="tab"] {
@@ -850,13 +869,43 @@ button[data-baseweb="tab"] {
     font-weight: 500 !important;
     text-transform: none !important;
     letter-spacing: 0 !important;
-    padding: 10px 14px !important;
+    /* padding simétrico + margin 0 → los dos separadores de cada pestaña
+       quedan a la MISMA distancia del texto */
+    padding: 10px 20px !important;
+    margin: 0 !important;
+    justify-content: center !important;
+    text-align: center !important;
     border-bottom: 2px solid transparent !important;
-    transition: color var(--dur-2) var(--ease-out),
-                border-color var(--dur-2) var(--ease-out) !important;
     border-radius: 0 !important;
     background: transparent !important;
+    position: relative !important;                /* ancla del ::after */
+    transition: color var(--dur-2) var(--ease-out),
+                border-color var(--dur-2) var(--ease-out) !important;
 }
+
+/* El párrafo interno del label no debe aportar márgenes laterales */
+button[data-baseweb="tab"] [data-testid="stMarkdownContainer"],
+button[data-baseweb="tab"] p { margin: 0 !important; }
+
+/* Separador vertical sutil: hairline de 1px que se aviva al bajar y se funde
+   con la línea divisoria, con halo dorado suave y simétrico. */
+button[data-baseweb="tab"]:not(:last-of-type)::after {
+    content: "";
+    position: absolute;
+    right: 0;
+    top: 24%;
+    bottom: 0;
+    width: 1px;
+    background: linear-gradient(180deg,
+        rgba(var(--accent-rgb),0.10) 0%,
+        rgba(var(--accent-rgb),0.24) 55%,
+        rgba(var(--accent-rgb),0.34) 100%);
+    box-shadow: 0 0 5px rgba(var(--accent-rgb),0.20);
+    border-radius: 1px;
+    pointer-events: none;
+}
+/* Refuerzo defensivo: jamás un separador colgando tras la última pestaña */
+button[data-baseweb="tab"]:last-of-type::after { display: none !important; }
 
 button[data-baseweb="tab"][aria-selected="true"] {
     color: var(--text-hi) !important;
@@ -870,9 +919,10 @@ button[data-baseweb="tab"]:hover {
     background: transparent !important;
 }
 
-/* Barra deslizante nativa de Streamlit bajo la pestaña activa */
+/* Barra deslizante nativa bajo la pestaña activa. El tab-border nativo se oculta
+   porque la línea divisoria ya la dibuja el tab-list (evita línea doble/flotante). */
 [data-baseweb="tab-highlight"] { background-color: var(--accent) !important; }
-[data-baseweb="tab-border"]    { background-color: var(--hairline) !important; }
+[data-baseweb="tab-border"]    { display: none !important; }
 
 /* ── Input genérico ────────────────────────────────────────────────── */
 [data-testid="stTextInput"] input {
@@ -3090,8 +3140,14 @@ section[data-testid="stSidebar"] {
         scrollbar-width: thin !important;
         -webkit-overflow-scrolling: touch !important;
     }
+    /* Menos aire en pantalla estrecha (el centrado/scroll ya lo resuelve el
+       width:max-content + min-width:100% del bloque principal de tabs). */
+    [data-testid="stTabs"] [data-baseweb="tab-list"],
+    [data-testid="stTabs"] [role="tablist"] {
+        margin: 4px auto 16px !important;
+    }
     [data-testid="stTabs"] button[data-baseweb="tab"] {
-        padding: 8px 12px !important;
+        padding: 8px 14px !important;
         font-size: 0.74rem !important;
         flex-shrink: 0 !important;
         white-space: nowrap !important;
