@@ -323,15 +323,30 @@ def _get_price_history_from_nasdaq(ticker: str, period: str = "2y", interval: st
     frm = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     to = datetime.now().strftime("%Y-%m-%d")
 
-    def _fetch(asset_class: str):
+    # La API de Nasdaq cubre NYSE **y** NASDAQ. Para acciones de CLASE (BRK-B,
+    # BF-B) usa el PUNTO, no el guion que usa yfinance internamente → probamos
+    # el ticker tal cual y también su variante con punto. assetclass: stocks y,
+    # como respaldo, etf (para SPY, benchmark del RS).
+    variants = [ticker.upper()]
+    if "-" in ticker:
+        variants.append(ticker.upper().replace("-", "."))
+
+    def _fetch(tk: str, asset_class: str):
         return _nasdaq_json(
-            f"/api/quote/{ticker.upper()}/historical?assetclass={asset_class}"
+            f"/api/quote/{tk}/historical?assetclass={asset_class}"
             f"&fromdate={frm}&todate={to}&limit=9999"
         )
 
     try:
-        data = _fetch("stocks") or _fetch("etf")   # SPY (benchmark del RS) es ETF
-        rows = (((data or {}).get("tradesTable") or {}).get("rows") or []) if data else []
+        rows = []
+        for tk in variants:
+            for ac in ("stocks", "etf"):
+                data = _fetch(tk, ac)
+                rows = (((data or {}).get("tradesTable") or {}).get("rows") or []) if data else []
+                if rows:
+                    break
+            if rows:
+                break
         recs = []
         for r in rows:
             try:
