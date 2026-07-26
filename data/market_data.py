@@ -253,21 +253,112 @@ def _save_cache(key: str, data: dict) -> None:
 # ── Datos de precio ───────────────────────────────────────────────────────
 
 def get_price_history(ticker: str, period: str = "2y", interval: str = "1d") -> pd.DataFrame:
-    """OHLCV diario o semanal para análisis técnico."""
+    """OHLCV diario o semanal para análisis técnico.
+
+    Fuente primaria: yfinance. RESPALDO EN LA NUBE: si yfinance viene vacío
+    (Yahoo bloquea/limita las IPs de datacenter en Render/Cloud → DataFrame
+    vacío → de ahí venían los "nan" en target, Stage, 52W, RS, ATR en
+    producción), se cae a Nasdaq, que SÍ responde OHLCV real en esas IPs (la
+    misma API que ya usamos para insiders). Así el análisis técnico y de riesgo
+    funciona igual en localhost y en producción."""
     key = f"price_{ticker}_{period}_{interval}"
     cached = _load_cache(key, ttl_hours=TTL_PRICE_DAILY)
     if cached:
-        df = pd.DataFrame(cached)
-        df.index = pd.to_datetime(df.index)
-        return df
+        try:
+            df = pd.DataFrame(cached)
+            if not df.empty:
+                # utc=True + tz_localize(None) tolera cachés VIEJOS con offsets
+                # mixtos (-04:00/-05:00) y devuelve SIEMPRE un índice tz-naïve
+                # uniforme (si no, el .intersection del RS con otro df tz-naïve
+                # daba vacío → RS en blanco).
+                idx = pd.to_datetime(df.index, utc=True, errors="coerce")
+                df.index = idx.tz_localize(None)
+                df = df[df.index.notna()]
+                if not df.empty:
+                    return df
+        except Exception:
+            pass
 
-    stock = _yt(ticker)
-    df = stock.history(period=period, interval=interval, auto_adjust=True)
-    if df.empty:
-        return df
+    df = pd.DataFrame()
+    try:
+        df = _yt(ticker).history(period=period, interval=interval, auto_adjust=True)
+    except Exception:
+        df = pd.DataFrame()
 
-    _save_cache(key, df.to_dict())
+    # Respaldo Nasdaq cuando yfinance no trae nada (típico en cloud).
+    if df is None or df.empty:
+        df = _get_price_history_from_nasdaq(ticker, period, interval)
+
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    # Índice tz-NAÏVE SIEMPRE: el índice de yfinance es tz-aware (America/New_York,
+    # con offsets mixtos -04:00/-05:00 por el horario de verano). Guardado como
+    # texto y releído, pd.to_datetime falla con esos offsets mixtos y ROMPE la
+    # gráfica ("Tz-aware ... unless utc=True"). Lo volvemos naïve antes de cachear
+    # y también en el objeto que devolvemos, para que sea uniforme y estable.
+    try:
+        if getattr(df.index, "tz", None) is not None:
+            df.index = df.index.tz_localize(None)
+    except (TypeError, AttributeError):
+        pass
+
+    # Cachear con índice en texto (json.dumps no serializa claves Timestamp) —
+    # así el caché REALMENTE persiste y la próxima lectura es instantánea.
+    try:
+        df_cache = df.copy()
+        df_cache.index = df_cache.index.astype(str)
+        _save_cache(key, df_cache.to_dict())
+    except Exception:
+        pass
     return df
+
+
+def _get_price_history_from_nasdaq(ticker: str, period: str = "2y", interval: str = "1d") -> pd.DataFrame:
+    """OHLCV histórico desde la API pública de Nasdaq (funciona en IPs de
+    datacenter, a diferencia de yfinance). Devuelve un DataFrame con el MISMO
+    formato que yfinance (columnas Open/High/Low/Close/Volume, índice de fechas
+    ascendente). Vacío si falla. NUNCA lanza."""
+    days = {"1mo": 40, "3mo": 100, "6mo": 190, "1y": 370, "2y": 740, "3y": 1100, "5y": 1850}.get(period, 740)
+    frm = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    to = datetime.now().strftime("%Y-%m-%d")
+
+    def _fetch(asset_class: str):
+        return _nasdaq_json(
+            f"/api/quote/{ticker.upper()}/historical?assetclass={asset_class}"
+            f"&fromdate={frm}&todate={to}&limit=9999"
+        )
+
+    try:
+        data = _fetch("stocks") or _fetch("etf")   # SPY (benchmark del RS) es ETF
+        rows = (((data or {}).get("tradesTable") or {}).get("rows") or []) if data else []
+        recs = []
+        for r in rows:
+            try:
+                d = pd.to_datetime(r.get("date"), format="%m/%d/%Y", errors="coerce")
+                c = _nasdaq_num(r.get("close"))
+                if d is None or pd.isna(d) or c is None:
+                    continue
+                recs.append({
+                    "Date":   d,
+                    "Open":   _nasdaq_num(r.get("open"))  or c,
+                    "High":   _nasdaq_num(r.get("high"))  or c,
+                    "Low":    _nasdaq_num(r.get("low"))   or c,
+                    "Close":  c,
+                    "Volume": _nasdaq_num(r.get("volume")) or 0.0,
+                })
+            except Exception:
+                continue
+        if not recs:
+            return pd.DataFrame()
+        df = pd.DataFrame(recs).set_index("Date").sort_index()
+        df = df[~df.index.duplicated(keep="last")]
+        if interval == "1wk":
+            df = df.resample("W").agg({"Open": "first", "High": "max", "Low": "min",
+                                       "Close": "last", "Volume": "sum"}).dropna(subset=["Close"])
+        return df
+    except Exception:
+        return pd.DataFrame()
 
 
 def get_weekly_history(ticker: str, period: str = "3y") -> pd.DataFrame:
