@@ -87,14 +87,40 @@ def _chart(fig, **kwargs):
 MAX_HISTORY_IN_MEMORY = 10
 
 
+def _sb_mark_used(ticker: str):
+    """Marca un ticker como recién usado para el ORDEN del historial lateral.
+
+    Necesario porque un análisis servido desde el caché compartido (Upstash)
+    conserva su timestamp ORIGINAL (que puede ser de hace semanas): sin esta
+    marca, el análisis que el usuario acaba de pedir caía al FONDO de la lista.
+    No se toca analysis.timestamp a propósito — es la fecha real del análisis
+    y se muestra en el header; sobrescribirla mentiría sobre su antigüedad."""
+    try:
+        st.session_state.setdefault("_sb_last_used", {})[ticker.upper()] = \
+            datetime.now().isoformat()
+    except Exception:
+        pass
+
+
+def _sb_recency_key(analysis) -> str:
+    """Clave de orden del historial: último uso en esta sesión si existe;
+    si no, el timestamp del análisis. Ambos en ISO → comparables como texto."""
+    last_used = (st.session_state.get("_sb_last_used") or {}).get(
+        getattr(analysis, "ticker", "").upper())
+    return last_used or getattr(analysis, "timestamp", "") or ""
+
+
 def _prune_analyses_in_memory():
     """Mantiene en session_state.analyses solo los MAX_HISTORY_IN_MEMORY más
-    recientes (por timestamp). NO borra nada de disco/nube — solo libera RAM."""
+    recientes (por último uso / timestamp). NO borra nada de disco/nube — solo
+    libera RAM. Usa la misma clave que el orden del sidebar para que un análisis
+    recién pedido (aunque venga de Upstash con timestamp viejo) nunca sea el
+    primero en ser expulsado."""
     analyses = st.session_state.get("analyses") or {}
     if len(analyses) <= MAX_HISTORY_IN_MEMORY:
         return
     keep = sorted(analyses.values(),
-                  key=lambda a: getattr(a, "timestamp", "") or "",
+                  key=_sb_recency_key,
                   reverse=True)[:MAX_HISTORY_IN_MEMORY]
     keep_tickers = {a.ticker for a in keep}
     for t in list(analyses.keys()):
@@ -553,9 +579,11 @@ def render_sidebar():
                     unsafe_allow_html=True)
 
         analyses = st.session_state.get("analyses", {}) or {}
+        # Orden: lo más recientemente USADO arriba (no solo lo más recién
+        # generado — un análisis reutilizado de Upstash trae timestamp viejo).
         analyses_sorted = sorted(
             analyses.values(),
-            key=lambda a: getattr(a, "timestamp", "") or "",
+            key=_sb_recency_key,
             reverse=True,
         )[:MAX_HISTORY_IN_MEMORY]
 
@@ -686,6 +714,9 @@ def run_analysis(ticker: str):
         st.session_state.analyses[ticker] = shared
         st.session_state.selected_ticker = ticker
         st.session_state.quick_view_ticker = None
+        # El usuario ACABA de pedir este análisis: arriba del historial, aunque
+        # el objeto de Upstash conserve su timestamp original.
+        _sb_mark_used(ticker)
         _prune_analyses_in_memory()
         # Marca este ticker como reciente en el índice de la nube (para la barra
         # lateral tras un reinicio). No-op sin credenciales; nunca bloquea.
@@ -808,6 +839,7 @@ def run_analysis(ticker: str):
     st.session_state.selected_ticker = ticker
     st.session_state.quick_view_ticker = None
     st.session_state.analyzing = False
+    _sb_mark_used(ticker)          # análisis recién hecho → arriba del historial
     _prune_analyses_in_memory()
 
     # Guardar a disco en background — no bloqueamos el rerun por IO.
@@ -1257,6 +1289,31 @@ def _clean_tile_value(value, max_len=22):
     # Traduce términos comunes
     s = _translate_status(s)
     return s
+
+
+def _fallback_financial_health(ratios):
+    """Solidez Financiera 0-100 derivada del balance REAL (determinista).
+
+    SOLO se usa cuando el análisis cacheado no trae el sub-score de la IA
+    (análisis generados durante la ventana en que el JSON del modelo venía
+    incompleto): así la barra siempre existe y refleja datos reales frescos.
+    Promedia los componentes disponibles; si no hay ninguno devuelve None
+    (la barra simplemente no se dibuja, nunca inventa)."""
+    comps = []
+    de = _safe_num((ratios or {}).get("debt_to_equity"))
+    if de is not None and de >= 0:
+        comps.append(100 if de < 0.5 else 75 if de < 1 else 45 if de < 2 else 20)
+    cr = _safe_num((ratios or {}).get("current_ratio"))
+    if cr is not None and cr > 0:
+        comps.append(100 if cr > 2 else 80 if cr > 1.5 else 60 if cr > 1 else 30)
+    fcf = _safe_num((ratios or {}).get("fcf_yield"))
+    if fcf is not None:
+        comps.append(90 if fcf > 5 else 70 if fcf > 2 else 50 if fcf > 0 else 20)
+    om = _safe_num((ratios or {}).get("operating_margin"))
+    if om is not None:
+        om = om * 100 if -1 <= om <= 1 else om   # acepta decimal (0.45) o % (45)
+        comps.append(90 if om > 25 else 70 if om > 15 else 50 if om > 5 else 25)
+    return round(sum(comps) / len(comps)) if comps else None
 
 
 def _extract_rr_ratio(value):
@@ -1991,16 +2048,49 @@ def render_fundamentals(analysis: StockAnalysis):
     st.markdown('<div class="section-title-bar">Pilares Fundamentales</div>',
                 unsafe_allow_html=True)
 
+    # Los sub_scores guardados existen en TRES variantes (verificado en los
+    # análisis reales de producción):
+    #   a) el agente viejo PISABA quality/growth con la versión snowflake
+    #      (reescalada ×0.8 a 0-20) y añadía "value" → escalas mezcladas;
+    #   b) si el JSON del modelo venía sin sub_scores, solo quedaban las 3
+    #      claves snowflake → faltaban las barras de Valoración y Solidez;
+    #   c) a veces el modelo devuelve 0-100 en vez de 0-25 (visto en NU).
+    # Aquí se normaliza TODO a 0-100 y se completan las barras que falten.
+    q  = _safe_num(sub.get("quality"))
+    g  = _safe_num(sub.get("growth"))
+    v  = _safe_num(sub.get("valuation"))
+    fh = _safe_num(sub.get("financial_health"))
+    v_snow = _safe_num(sub.get("value"))
+    if v_snow is not None:
+        # Huella de la variante (a)/(b): deshacer el reescalado ×0.8 y
+        # recuperar Valoración desde la clave snowflake si no existe la real.
+        if q is not None:
+            q = q / 0.8
+        if g is not None:
+            g = g / 0.8
+        if v is None:
+            v = v_snow / 0.8
+    # Escala: si algún valor supera 25 el set viene en 0-100; si no, es 0-25.
+    _vals = [x for x in (q, g, v, fh) if x is not None]
+    _mult = 1.0 if _vals and max(_vals) > 25.5 else 4.0
+
+    def _to100(x):
+        return None if x is None else max(0.0, min(100.0, x * _mult))
+
+    q, g, v, fh = _to100(q), _to100(g), _to100(v), _to100(fh)
+    if fh is None:
+        # Sin dato de la IA → se deriva del balance REAL ya fetcheado (fresco).
+        fh = _fallback_financial_health(ratios)
+
     sub_items = []
-    pillars = [
-        ("Calidad",          sub.get("quality"),           "#E2B25C"),
-        ("Crecimiento",      sub.get("growth"),            "#3DD68C"),
-        ("Valoración",       sub.get("valuation"),         "#6FA3E0"),
-        ("Solidez Financiera", sub.get("financial_health"), "#9D8CE0"),
-    ]
-    for label, val, color in pillars:
+    for label, val, color in [
+        ("Calidad",            q,  "#E2B25C"),
+        ("Crecimiento",        g,  "#3DD68C"),
+        ("Valoración",         v,  "#6FA3E0"),
+        ("Solidez Financiera", fh, "#9D8CE0"),
+    ]:
         if val is not None:
-            sub_items.append((label, float(val) * 4, color))  # escalar /25 → /100
+            sub_items.append((label, float(val), color))
 
     if sub_items:
         fig = build_metric_bars(sub_items, height=240,
@@ -2080,14 +2170,18 @@ def render_future(analysis: StockAnalysis):
 
     sub_items = []
     pillars = [
-        ("Calidad del Moat",     sub.get("moat_quality"),                 "#E2B25C"),
-        ("Runway de Crecimiento", sub.get("growth_runway"),               "#3DD68C"),
-        ("Resistencia Disrupción", sub.get("disruption_resilience"),      "#6FA3E0"),
-        ("Capital Allocation",   sub.get("management_capital_allocation"), "#9D8CE0"),
+        ("Calidad del Moat",     _safe_num(sub.get("moat_quality")),                 "#E2B25C"),
+        ("Runway de Crecimiento", _safe_num(sub.get("growth_runway")),               "#3DD68C"),
+        ("Resistencia Disrupción", _safe_num(sub.get("disruption_resilience")),      "#6FA3E0"),
+        ("Capital Allocation",   _safe_num(sub.get("management_capital_allocation")), "#9D8CE0"),
     ]
+    # Guarda de escala: el modelo a veces devuelve 0-100 en vez de 0-25 (visto
+    # en producción con fundamentales) → no multiplicar en ese caso.
+    _fvals = [val for _, val, _ in pillars if val is not None]
+    _fmult = 1.0 if _fvals and max(_fvals) > 25.5 else 4.0
     for label, val, color in pillars:
         if val is not None:
-            sub_items.append((label, float(val) * 4, color))
+            sub_items.append((label, min(float(val) * _fmult, 100.0), color))
 
     if sub_items:
         fig = build_metric_bars(sub_items, height=240,
@@ -2178,7 +2272,17 @@ def render_institutional(analysis: StockAnalysis):
     ])
 
     # ── Top holders bar chart ──
+    # Si el análisis cacheado no trae los holders (se generó en Render con
+    # yfinance bloqueado), se buscan frescos: get_holders_data cachea 12h y
+    # tiene respaldo Nasdaq, así que la gráfica de Propiedad Institucional
+    # SIEMPRE tiene de dónde dibujar. Mismo patrón que la tabla de insiders.
     top_inst = holders_raw.get("top_institutions") or []
+    if not top_inst:
+        try:
+            from data.market_data import get_holders_data as _ghd
+            top_inst = (_ghd(analysis.ticker) or {}).get("top_institutions") or []
+        except Exception:
+            top_inst = []
     if top_inst:
         fig = build_holders_bars(top_inst)
         _chart(fig, use_container_width=True,

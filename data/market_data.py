@@ -1311,10 +1311,74 @@ def _get_insiders_from_nasdaq(ticker: str) -> dict:
     return result
 
 
+def _get_institutional_from_nasdaq(ticker: str) -> dict:
+    """Fallback de holders INSTITUCIONALES vía Nasdaq cuando yfinance falla
+    (bloqueado en IPs de datacenter — así se guardaron análisis sin la gráfica
+    de Propiedad Institucional en producción). Devuelve
+    {top_institutions: [{"Holder", "% Out"}], institutional_ownership_pct} en el
+    MISMO formato que consume build_holders_bars. NUNCA lanza.
+
+    OJO: el endpoint se llama SIN query string — con parámetros (?limit=…)
+    api.nasdaq.com responde 200 pero con cuerpo no-JSON. Probado en vivo.
+    Tickers de clase: Nasdaq usa punto (BRK.B), no el guion de yfinance."""
+    variants = [ticker.upper()]
+    if "-" in ticker:
+        variants.append(ticker.upper().replace("-", "."))
+    for tk in variants:
+        try:
+            data = _nasdaq_json(f"/api/company/{tk}/institutional-holdings")
+            if not data:
+                continue
+            rows = (((data.get("holdingsTransactions") or {}).get("table") or {})
+                    .get("rows") or [])
+            own = data.get("ownershipSummary") or {}
+            # Acciones en circulación (en millones) para calcular el % de cada fondo
+            shares_out_m = _nasdaq_num(
+                (own.get("ShareoutstandingTotal") or {}).get("value"))
+            inst_pct = _nasdaq_num(
+                (own.get("SharesOutstandingPCT") or {}).get("value"))
+            # SharesOutstandingPCT llega como "85.92%" (→ 85.92) pero en algunos
+            # tickers viene como fracción "0.86" → normalizar a 0-100.
+            if inst_pct is not None and inst_pct <= 1:
+                inst_pct *= 100
+            top = []
+            for row in rows[:10]:
+                name = str(row.get("ownerName", "")).strip()
+                shares = _nasdaq_num(row.get("sharesHeld"))
+                if not name or shares is None:
+                    continue
+                pct = (shares / (shares_out_m * 1e6) * 100) \
+                    if shares_out_m and shares_out_m > 0 else None
+                # "% Out" en PORCENTAJE (10.2 = 10.2%): build_holders_bars deja
+                # pasar tal cual los valores >= 1.
+                top.append({"Holder": name,
+                            "% Out": round(pct, 2) if pct is not None else 0.0})
+            if top:
+                out = {"top_institutions": top}
+                if inst_pct is not None:
+                    out["institutional_ownership_pct"] = float(inst_pct)
+                return out
+        except Exception:
+            continue
+    return {}
+
+
 def get_holders_data(ticker: str) -> dict:
     key = f"holders_{ticker}"
     cached = _load_cache(key, ttl_hours=TTL_HOLDERS)
     if cached:
+        # Auto-curación: un caché guardado ANTES del respaldo institucional (o
+        # durante un bloqueo de yfinance) puede venir sin top_institutions.
+        # Se completa desde Nasdaq y se re-guarda, en vez de servir el hueco
+        # durante todo el TTL.
+        if not cached.get("top_institutions"):
+            ni = _get_institutional_from_nasdaq(ticker)
+            if ni.get("top_institutions"):
+                cached["top_institutions"] = ni["top_institutions"]
+                if cached.get("institutional_ownership_pct") is None \
+                        and ni.get("institutional_ownership_pct") is not None:
+                    cached["institutional_ownership_pct"] = ni["institutional_ownership_pct"]
+                _save_cache(key, cached)
         return cached
 
     stock = _yt(ticker)
@@ -1379,6 +1443,17 @@ def get_holders_data(ticker: str) -> dict:
             result["insider_transactions"] = txns
     except Exception:
         pass
+
+    # Fallback Nasdaq para los holders INSTITUCIONALES si yfinance no los trajo
+    # (bloqueado en cloud → la gráfica de Propiedad Institucional salía vacía).
+    # Rellena solo lo que falta; nunca pisa datos buenos de yfinance.
+    if not result.get("top_institutions"):
+        ni = _get_institutional_from_nasdaq(ticker)
+        if ni.get("top_institutions"):
+            result["top_institutions"] = ni["top_institutions"]
+            if result.get("institutional_ownership_pct") is None \
+                    and ni.get("institutional_ownership_pct") is not None:
+                result["institutional_ownership_pct"] = ni["institutional_ownership_pct"]
 
     # Fallback Nasdaq SOLO para insiders si yfinance no los trajo (rate-limit en
     # cloud). No toca la ruta institucional. Rellena solo lo que falta.

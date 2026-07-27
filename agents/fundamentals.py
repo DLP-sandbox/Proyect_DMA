@@ -82,11 +82,27 @@ class FundamentalsAgent(BaseAgent):
             if "error" in result and "score" not in result:
                 return self._safe_report(ticker, result["error"])
 
-            sub_scores = result.get("sub_scores", {})
+            sub_scores = result.get("sub_scores", {}) or {}
+            # Haiku a veces devuelve los sub-scores en 0-100 aunque el prompt
+            # pide 0-25 (visto en producción). Normalizar a la escala canónica
+            # 0-25: de ella dependen el snowflake del orquestador y las barras.
+            try:
+                _nums = [float(v) for v in sub_scores.values()
+                         if isinstance(v, (int, float))]
+                if _nums and max(_nums) > 25.5:
+                    sub_scores = {k: (float(v) / 4.0 if isinstance(v, (int, float)) else v)
+                                  for k, v in sub_scores.items()}
+            except Exception:
+                pass
+            # Aporte al snowflake con claves SUFIJADAS (mismo patrón que
+            # technical/future). Antes se guardaba como "value"/"quality"/
+            # "growth" y PISABA los sub-scores reales: quality y growth quedaban
+            # reescalados a 0-20 → al orquestador (que espera 0-25) le llegaba
+            # un valor corrupto y a la gráfica de pilares le faltaban barras.
             snowflake = {
-                "value":   sub_scores.get("valuation", 12) / 25 * 20,
-                "quality": sub_scores.get("quality", 12) / 25 * 20,
-                "growth":  sub_scores.get("growth", 12) / 25 * 20,
+                "value_snowflake":   sub_scores.get("valuation", 12) / 25 * 20,
+                "quality_snowflake": sub_scores.get("quality", 12) / 25 * 20,
+                "growth_snowflake":  sub_scores.get("growth", 12) / 25 * 20,
             }
 
             return AgentReport(

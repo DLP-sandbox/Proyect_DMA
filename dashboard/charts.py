@@ -1177,20 +1177,26 @@ def build_rr_chart(current_price: float, stop: float, target: float, ticker: str
     # pueden solaparse nunca, ni cuando el precio actual queda pegadísimo a uno
     # de los dos extremos (antes los tres rótulos compartían columna y en ese
     # caso se mezclaban y no se podían leer).
-    LEFT_X  = 0.27                      # borde DERECHO de las etiquetas de extremos
-    BAND_X0, BAND_X1 = 0.30, 0.62       # banda de precio, en el centro
-    # En compacto la etiqueta de la derecha arranca antes y se acorta: con el
-    # ancho de la columna del Overview, "PRECIO ACTUAL $82.25" no cabía entero
-    # y se recortaba contra el borde (se perdían los céntimos).
-    RIGHT_X = 0.58 if compact else 0.65  # borde IZQUIERDO de la etiqueta de precio actual
-    CURRENT_NAME = "ACTUAL" if compact else "PRECIO ACTUAL"
+    if compact:
+        # Versión del Overview (columna estrecha). Para que las etiquetas se
+        # LEAN de verdad: se ocultan los ticks de precio del eje (los precios ya
+        # van dentro de cada etiqueta) → todo el ancho queda libre; la letra
+        # sube a 11px, la gráfica es más alta, y las etiquetas van METIDAS en el
+        # lienzo pegadas a los bordes: extremos a la izquierda creciendo hacia
+        # la derecha, precio actual a la derecha creciendo hacia la izquierda.
+        # Siguen en columnas opuestas → no pueden solaparse entre sí.
+        LEFT_X,  LEFT_ANCHOR  = 0.02, "left"
+        BAND_X0, BAND_X1      = 0.44, 0.72
+        RIGHT_X, RIGHT_ANCHOR = 0.98, "right"
+        CURRENT_NAME = "ACTUAL"
+        lbl_size, pct_size, fig_h, tick_size = 11, 18, 330, 8
+    else:
+        LEFT_X,  LEFT_ANCHOR  = 0.27, "right"   # extremos terminan aquí
+        BAND_X0, BAND_X1      = 0.30, 0.62      # banda de precio, en el centro
+        RIGHT_X, RIGHT_ANCHOR = 0.65, "left"    # precio actual arranca aquí
+        CURRENT_NAME = "PRECIO ACTUAL"
+        lbl_size, pct_size, fig_h, tick_size = 11, 19, 330, 9
     PCT_X = (BAND_X0 + BAND_X1) / 2     # los % van centrados dentro de la banda
-    # `compact` = la versión que cabe en la columna estrecha del Overview:
-    # menos alto y tipografía más pequeña, mismo layout y misma información.
-    lbl_size  = 9 if compact else 11
-    pct_size  = 15 if compact else 19
-    fig_h     = 250 if compact else 330
-    tick_size = 8 if compact else 9
 
     # Zonas: su ALTURA es el hueco de precio real, así que la mayor se ve al
     # instante sin tener que leer los números.
@@ -1204,9 +1210,9 @@ def build_rr_chart(current_price: float, stop: float, target: float, ticker: str
     # Niveles: línea corta dentro de la banda + etiqueta en SU columna, a la
     # altura de su propio precio.
     for price, color, name, dash, x_pos, anchor in [
-        (target,        GREEN,  "TARGET",        "dash",  LEFT_X,  "right"),
-        (stop,          RED,    "PROTECCIÓN",    "dash",  LEFT_X,  "right"),
-        (current_price, ORANGE, CURRENT_NAME,   "solid", RIGHT_X, "left"),
+        (target,        GREEN,  "TARGET",        "dash",  LEFT_X,  LEFT_ANCHOR),
+        (stop,          RED,    "PROTECCIÓN",    "dash",  LEFT_X,  LEFT_ANCHOR),
+        (current_price, ORANGE, CURRENT_NAME,   "solid", RIGHT_X, RIGHT_ANCHOR),
     ]:
         fig.add_shape(type="line", xref="paper", x0=BAND_X0 - 0.02, x1=BAND_X1 + 0.02,
                       y0=price, y1=price, line=dict(color=color, width=2, dash=dash))
@@ -1215,8 +1221,10 @@ def build_rr_chart(current_price: float, stop: float, target: float, ticker: str
             text=f"<b>{name}</b>  ${price:,.2f}",
             showarrow=False, align="left",
             font=dict(color=color, size=lbl_size, family="JetBrains Mono"),
-            bgcolor="rgba(11,14,17,0.82)", bordercolor=color,
-            borderwidth=1, borderpad=4,
+            # Fondo OPACO: si el chip llega a montarse sobre la banda de color,
+            # el texto sigue leyéndose perfecto (queda bien enmarcado).
+            bgcolor="rgba(11,14,17,0.94)", bordercolor=color,
+            borderwidth=1, borderpad=5 if compact else 4,
         )
 
     # Los dos números que importan: cuánto se gana y cuánto se arriesga.
@@ -1251,13 +1259,17 @@ def build_rr_chart(current_price: float, stop: float, target: float, ticker: str
         font=dict(color=TEXT, family="JetBrains Mono, monospace", size=11),
         height=fig_h,
         showlegend=False,
+        # En compacto el eje NO muestra precios (ya van en las etiquetas): así
+        # el lienzo usa todo el ancho de la columna y las etiquetas caben
+        # enteras con letra grande.
         yaxis=dict(range=[stop - span * 0.20, target + span * 0.20],
                    gridcolor=GRID, zerolinecolor=GRID,
-                   tickprefix="$", tickfont=dict(color=MUTED, size=tick_size)),
+                   tickprefix="$", tickfont=dict(color=MUTED, size=tick_size),
+                   showticklabels=not compact),
         xaxis=dict(range=[0, 1], showticklabels=False, showgrid=False,
                    zeroline=False, fixedrange=True),
-        margin=dict(l=8 if compact else 10, r=10 if compact else 20,
-                    t=44 if compact else 52, b=12 if compact else 16),
+        margin=dict(l=6 if compact else 10, r=6 if compact else 20,
+                    t=44 if compact else 52, b=10 if compact else 16),
         hovermode=False,
         title=dict(
             text=(f"<b>UPSIDE / DOWNSIDE</b>  ·  R/R {rr:.1f}:1" if compact else
