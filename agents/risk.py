@@ -168,7 +168,9 @@ class RiskAgent(BaseAgent):
             pos_value = shares_per_1k_risk * price
             metrics["position_size_at_1pct_risk"] = pos_value  # valor en USD para 1% de riesgo en $100K portfolio
 
-        metrics["beta"] = info.get("beta", 1.0)
+        # `or 1.0`: la clave puede existir con valor None (yfinance bloqueado y
+        # TV sin beta) — el default de .get() NO aplica en ese caso.
+        metrics["beta"] = info.get("beta") or 1.0
         metrics["implied_portfolio_pct"] = min(round(1 / metrics["rr_ratio"] * 5, 1), 10) if metrics.get("rr_ratio", 0) > 0 else 0
 
         return metrics
@@ -179,7 +181,7 @@ class RiskAgent(BaseAgent):
         lines = [
             f"# Análisis de Riesgo & Sizing: {ticker} — {info.get('name', ticker)}",
             f"**Precio actual:** ${price}",
-            f"**Beta:** {info.get('beta', 1.0):.2f}",
+            f"**Beta:** {(info.get('beta') or 1.0):.2f}",
             "",
             "## Métricas de Riesgo Pre-Calculadas",
             f"- ATR 14 días: ${risk.get('atr', 'N/A'):.2f} ({risk.get('atr_pct', 0):.1f}% del precio)" if risk.get('atr') else "- ATR: N/A",

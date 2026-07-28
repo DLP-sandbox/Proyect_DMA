@@ -458,20 +458,14 @@ class Orchestrator:
         return "\n".join(lines)
 
     def _parse_json(self, text: str) -> dict:
-        import re
-        match = re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
-        if match:
-            try:
-                return json.loads(match.group(1))
-            except Exception:
-                pass
-        match = re.search(r"\{[\s\S]+\}", text)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except Exception:
-                pass
-        return {}
+        """Parser compartido con los agentes: tolera saltos de línea literales,
+        comas colgantes, prosa tras el bloque y JSON truncado. Mismo contrato
+        que antes ({} si es irrecuperable → _fallback_synthesis), pero ahora la
+        tesis REAL del orquestador sobrevive a esos cuatro modos de fallo en vez
+        de descartarse."""
+        from agents.base import extract_json_dict
+        obj = extract_json_dict(text)
+        return obj if obj is not None else {}
 
     def _score_to_recommendation(self, score: float) -> str:
         if score >= THRESHOLDS["MUY ATRACTIVO"]:

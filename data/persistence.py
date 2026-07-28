@@ -130,8 +130,13 @@ def load_all_analyses() -> dict:
 
 
 def stock_analysis_from_dict(d: dict):
-    """Reconstruye un StockAnalysis (con sus AgentReports) desde dict."""
-    from agents.base import AgentReport
+    """Reconstruye un StockAnalysis (con sus AgentReports) desde dict.
+
+    El texto de cada análisis pasa por `sanitize_leaked_json_text`: si un
+    análisis viejo quedó guardado con el volcado de JSON crudo (disco o
+    Upstash — ambos entran por aquí), al cargarlo se rescata SOLO la prosa.
+    Para texto ya limpio es un no-op."""
+    from agents.base import AgentReport, sanitize_leaked_json_text
     from agents.orchestrator import StockAnalysis
 
     reports = {}
@@ -142,7 +147,7 @@ def stock_analysis_from_dict(d: dict):
             reports[k] = AgentReport(
                 agent_name=v.get("agent_name", k),
                 score=float(v.get("score", 50)),
-                analysis=v.get("analysis", ""),
+                analysis=sanitize_leaked_json_text(v.get("analysis", "")),
                 pros=list(v.get("pros") or []),
                 cons=list(v.get("cons") or []),
                 key_metrics=dict(v.get("key_metrics") or {}),
@@ -161,7 +166,7 @@ def stock_analysis_from_dict(d: dict):
             composite_score=float(d.get("composite_score", 50)),
             recommendation=d.get("recommendation", "EN OBSERVACIÓN"),
             conviction_level=d.get("conviction_level", "MEDIUM"),
-            investment_thesis=d.get("investment_thesis", ""),
+            investment_thesis=sanitize_leaked_json_text(d.get("investment_thesis", "")),
             key_strengths=list(d.get("key_strengths") or []),
             key_risks=list(d.get("key_risks") or []),
             entry_strategy=d.get("entry_strategy", ""),

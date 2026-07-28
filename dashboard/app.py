@@ -1142,21 +1142,36 @@ def _render_pros_cons(report, pros_title="Señales positivas", cons_title="Seña
                     unsafe_allow_html=True)
 
 
+def _sanitize_narrative(text):
+    """Última línea de defensa al MOSTRAR: si el texto es un volcado de JSON
+    crudo (análisis viejo cacheado), rescata solo la prosa. No-op para texto
+    limpio; ante cualquier error, el texto original."""
+    try:
+        from agents.base import sanitize_leaked_json_text
+        return sanitize_leaked_json_text(text)
+    except Exception:
+        return text
+
+
 def _render_analysis_card(report, title="Análisis Detallado"):
     if not report.analysis:
         return
     st.markdown(f'<div class="section-title-bar">{_strip_ui_emoji(title)}</div>', unsafe_allow_html=True)
     st.markdown(
-        f'<div class="analysis-card"><div class="analysis-text">{report.analysis}</div></div>',
+        f'<div class="analysis-card"><div class="analysis-text">{_sanitize_narrative(report.analysis)}</div></div>',
         unsafe_allow_html=True,
     )
 
 
 def _render_insight_card(title, content, color="#E2B25C", icon="💡"):
     """Card con barra lateral fina de acento semántico. El icon se acepta por
-    compatibilidad pero no se renderiza (sin emojis-icono)."""
+    compatibilidad pero no se renderiza (sin emojis-icono).
+    Por aquí pasan TODOS los campos narrativos de raw_data (dcf_thesis,
+    key_insight, macro_verdict, dominant_narrative…): el sanitize los blinda
+    contra volcados de JSON de análisis viejos."""
     if not content or not isinstance(content, str) or len(content) < 5:
         return
+    content = _sanitize_narrative(content)
     st.markdown(f"""
     <div class="insight-card" style="border-left-color:{color};">
         <div class="insight-card-header">
@@ -2230,6 +2245,33 @@ def render_institutional(analysis: StockAnalysis):
     insider_raw = km.get("insider_buying_signal") or "neutral"
     squeeze_raw = km.get("squeeze_potential") or "low"
 
+    # ── Relleno FRESCO de los dos tiles numéricos si el análisis cacheado los
+    # trae vacíos (generado con las fuentes bloqueadas). Solo datos
+    # deterministas: % institucional (get_holders_data, con respaldo Nasdaq) y
+    # short interest (get_company_info, con respaldo Nasdaq/TradingView). Los
+    # enums del agente (señal de insiders, squeeze) NO se inventan.
+    def _tile_empty(v):
+        return (not v) or str(v).strip().lower() in ("", "n/a", "n/d", "—", "none", "unknown")
+
+    if _tile_empty(inst_raw) or _safe_num(_extract_percent(inst_raw)) is None:
+        try:
+            from data.market_data import get_holders_data as _ghd0
+            _pct = (_ghd0(analysis.ticker) or {}).get("institutional_ownership_pct")
+            if _pct is not None:
+                inst_raw = f"{float(_pct):.1f}%"
+        except Exception:
+            pass
+    if _tile_empty(short_raw) or _safe_num(_extract_percent(short_raw)) is None:
+        try:
+            from data.market_data import get_company_info as _gci0
+            _sp = (_gci0(analysis.ticker) or {}).get("short_percent")
+            if _sp is not None:
+                # yfinance/Nasdaq lo dan como fracción (0.0137 = 1.37%)
+                _sp = float(_sp)
+                short_raw = f"{(_sp * 100 if _sp < 1 else _sp):.1f}% del float"
+        except Exception:
+            pass
+
     insider_level = "good" if "bullish" in insider_raw.lower() else "bad" if "bearish" in insider_raw.lower() else "neutral"
     squeeze_level = "good" if "high" in squeeze_raw.lower() else "neutral" if "medium" in squeeze_raw.lower() else "warn"
 
@@ -2882,7 +2924,7 @@ def render_agent_tab(analysis: StockAnalysis, agent_key: str):
     with col_conv:
         st.markdown(f"#### {icon} {_agent_display_name(report)}")
         st.markdown(
-            f'<div class="analysis-card"><div class="analysis-text">{report.analysis}</div></div>',
+            f'<div class="analysis-card"><div class="analysis-text">{_sanitize_narrative(report.analysis)}</div></div>',
             unsafe_allow_html=True,
         )
 

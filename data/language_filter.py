@@ -137,46 +137,19 @@ def _fix_agreement(text: str) -> str:
 def _strip_raw_json(text):
     """Rescata el texto limpio de un análisis que quedó CACHEADO como JSON crudo.
 
-    Algunos análisis viejos (generados antes del arreglo del parser) guardaron en
-    `.analysis` el volcado completo del JSON del modelo — con llaves, `"score"`,
-    prosa extra, etc. Aquí, SOLO si el texto claramente es ese volcado, extraemos
-    el valor del campo `"analysis"`. Si no parece JSON, se devuelve intacto.
-    Fallback total: ante cualquier error, el texto original."""
+    Delegado en `sanitize_leaked_json_text` (agents.base), que cubre más casos
+    que la versión anterior de esta función: volcados con prosa por delante,
+    JSON truncado, saltos de línea literales dentro de los strings y volcados
+    del ORQUESTADOR (claves investment_thesis/composite_score, sin "analysis").
+    El contrato se mantiene: prosa normal = no-op; ante cualquier error, el
+    texto original intacto."""
     if not text or not isinstance(text, str):
         return text
-    t = text.strip()
-    looks_json = (t.startswith("```") or t.startswith("{")) and '"analysis"' in t and '"score"' in t
-    if not looks_json:
-        return text
     try:
-        import json as _json
-        # 1) objeto balanceado desde el primer '{'
-        start = t.find("{")
-        if start != -1:
-            depth = 0
-            for i in range(start, len(t)):
-                if t[i] == "{":
-                    depth += 1
-                elif t[i] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        try:
-                            obj = _json.loads(t[start:i + 1])
-                            if isinstance(obj, dict) and isinstance(obj.get("analysis"), str) and obj["analysis"].strip():
-                                return obj["analysis"]
-                        except Exception:
-                            pass
-                        break
-        # 2) regex directo al campo "analysis"
-        m = re.search(r'"analysis"\s*:\s*"((?:[^"\\]|\\.)*)"', t)
-        if m:
-            try:
-                return _json.loads('"' + m.group(1) + '"')
-            except Exception:
-                return m.group(1)
+        from agents.base import sanitize_leaked_json_text
+        return sanitize_leaked_json_text(text)
     except Exception:
-        pass
-    return text
+        return text
 
 
 def _clean_text(text):

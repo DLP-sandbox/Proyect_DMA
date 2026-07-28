@@ -241,6 +241,175 @@ class AgentReport:
         }
 
 
+# ── Parseo robusto de JSON de las respuestas de Claude ──────────────────
+# Los modelos (sobre todo Haiku) suelen escribir los campos narrativos con
+# SALTOS DE LÍNEA LITERALES dentro del string (ej: "analysis" en 1-2 párrafos).
+# json.loads en modo estricto rechaza esos caracteres de control ("Invalid
+# control character"), lo que hacía fallar el parseo y volcar el JSON crudo en
+# pantalla. Estas utilidades toleran esos casos y reparan JSON truncado, sin
+# cambiar el comportamiento para respuestas ya válidas. (Portadas de la versión
+# L-DLP-Analysis, donde ya están probadas en producción.)
+
+def _close_truncated_json(s: str) -> str:
+    """Cierra strings/objetos/arrays que quedaron abiertos por truncado."""
+    in_str = False
+    esc = False
+    stack = []
+    for ch in s:
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch in "{[":
+            stack.append(ch)
+        elif ch == "}" and stack and stack[-1] == "{":
+            stack.pop()
+        elif ch == "]" and stack and stack[-1] == "[":
+            stack.pop()
+    out = s
+    if in_str:
+        out += '"'
+    out = re.sub(r",\s*$", "", out.rstrip())
+    for ch in reversed(stack):
+        out += "}" if ch == "{" else "]"
+    return out
+
+
+def _lenient_json_loads(s: str):
+    """json.loads tolerante: permite saltos de línea literales (strict=False),
+    quita comas colgantes y repara truncados. Devuelve dict o None."""
+    s = s.strip()
+    no_trailing = re.sub(r",(\s*[}\]])", r"\1", s)
+    for cand in (s, no_trailing, _close_truncated_json(s), _close_truncated_json(no_trailing)):
+        try:
+            obj = json.loads(cand, strict=False)
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
+def _first_balanced_object(text: str):
+    """Devuelve el primer objeto JSON balanceado (respeta strings: una llave
+    dentro de la prosa no desincroniza el conteo). Si quedó truncado, devuelve
+    desde la primera '{' hasta el final para repararlo luego."""
+    start = text.find("{")
+    if start == -1:
+        return None
+    in_str = False
+    esc = False
+    depth = 0
+    for i in range(start, len(text)):
+        ch = text[i]
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return text[start:]
+
+
+def extract_json_dict(text: str):
+    """Extrae de forma robusta el primer objeto JSON de `text`. dict o None."""
+    candidates = []
+    m = re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
+    if m:
+        candidates.append(m.group(1))
+    balanced = _first_balanced_object(text)
+    if balanced:
+        candidates.append(balanced)
+    m = re.search(r"\{[\s\S]+\}", text)
+    if m:
+        candidates.append(m.group(0))
+    for cand in candidates:
+        obj = _lenient_json_loads(cand)
+        if obj is not None:
+            return obj
+    return None
+
+
+def salvage_analysis_text(text: str) -> str:
+    """Rescata SÓLO el texto del campo 'analysis' de un JSON irrecuperable.
+    Nunca devuelve el JSON crudo: si no hay nada rescatable, un mensaje limpio."""
+    m = re.search(r'"analysis"\s*:\s*"((?:[^"\\]|\\.)*)"', text, re.DOTALL)
+    if m:
+        try:
+            val = json.loads('"' + m.group(1) + '"', strict=False).strip()
+            if len(val) >= 20:
+                return val
+        except Exception:
+            pass
+    # Truncado: desde "analysis": " hasta el próximo campo o el final del texto
+    m = re.search(r'"analysis"\s*:\s*"(.+?)(?="\s*,\s*"\w+"\s*:|"\s*\}|$)', text, re.DOTALL)
+    if m:
+        val = re.sub(r"\\[nrt]", " ", m.group(1))
+        val = val.replace('\\"', '"').replace("\\", "").strip().strip('"').strip()
+        if len(val) >= 20:
+            return val
+    return ("No pudimos generar la conclusión de este análisis en este intento. "
+            "Vuelve a ejecutarlo en un momento; a veces la fuente de datos o el "
+            "modelo tardan en responder.")
+
+
+def _looks_like_leaked_json(text: str) -> bool:
+    """True SÓLO si el texto es claramente un volcado de JSON crudo (no prosa).
+
+    Conservador a propósito: una conclusión normal en español nunca empieza con
+    '{' o '```', ni contiene claves JSON literales como `"analysis":`. Así es
+    imposible tocar por error un análisis bien formado. Incluye las claves del
+    ORQUESTADOR (`investment_thesis`/`composite_score`): su volcado no contiene
+    `"analysis"` y se escapaba del guard original."""
+    if not text:
+        return False
+    stripped = text.lstrip()
+    if stripped.startswith("{") or stripped.startswith("```"):
+        return True
+    # Claves JSON literales de un reporte serializado (los keys van en inglés;
+    # la prosa en español usaría «análisis» con tilde, nunca `"analysis":`).
+    return re.search(
+        r'"(analysis|score|conviction|investment_thesis|composite_score)"\s*:',
+        text) is not None
+
+
+def sanitize_leaked_json_text(text: str) -> str:
+    """Si `text` es un JSON crudo filtrado (bug de análisis viejos guardados),
+    devuelve SÓLO la conclusión limpia. Si es prosa normal, lo deja intacto.
+
+    No muta datos: se aplica al cargar/mostrar, extrayendo el texto real sobre
+    la marcha. Para texto ya limpio es un no-op."""
+    if not isinstance(text, str) or not _looks_like_leaked_json(text):
+        return text
+    obj = extract_json_dict(text)
+    if obj is not None:
+        # Volcado de agente → campo "analysis"; volcado del orquestador → la
+        # tesis vive en "investment_thesis". Se rescata la que exista.
+        for k in ("analysis", "investment_thesis"):
+            val = obj.get(k)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+    return salvage_analysis_text(text)
+
+
 class BaseAgent:
     name: str = "BaseAgent"
     model: str = SUBAGENT_MODEL
@@ -278,52 +447,23 @@ class BaseAgent:
     def _parse_json(self, text: str) -> dict:
         """Extrae y parsea el JSON de la respuesta del modelo, de forma robusta.
 
-        Si el JSON viene malformado o con texto EXTRA (p. ej. prosa tipo
-        "Contexto Complementario" después del bloque, o un `}` cambiado por `]`),
-        NUNCA vuelca el texto crudo en `analysis`: intenta varios candidatos y,
-        como último recurso, recupera solo los campos de texto por regex para que
-        la UI muestre únicamente el análisis limpio — jamás el JSON con símbolos."""
-        candidates = []
+        `extract_json_dict` tolera saltos de línea literales dentro de los
+        strings, comas colgantes, prosa después del bloque y JSON TRUNCADO por
+        max_tokens (los cuatro modos de fallo vistos en producción). Si aun así
+        no se puede parsear, se recuperan score/convicción por regex y el texto
+        con `salvage_analysis_text` — NUNCA se vuelca el JSON crudo en pantalla
+        ni se deja el análisis en blanco."""
+        obj = extract_json_dict(text)
+        if obj is not None:
+            return obj
 
-        # 1) Bloque cercado ```json ... ```
-        m = re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
-        if m:
-            candidates.append(m.group(1))
-
-        # 2) Objeto {...} BALANCEADO desde el primer '{' — descarta la prosa que
-        #    el modelo a veces añade después del JSON.
-        start = text.find("{")
-        if start != -1:
-            depth = 0
-            for i in range(start, len(text)):
-                ch = text[i]
-                if ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 0:
-                        candidates.append(text[start:i + 1])
-                        break
-
-        # 3) Voraz: primer '{' hasta el último '}'.
-        m = re.search(r"\{[\s\S]+\}", text)
-        if m:
-            candidates.append(m.group(0))
-
-        for cand in candidates:
-            try:
-                return json.loads(cand)
-            except Exception:
-                continue
-
-        # ── Último recurso: recuperar SOLO los campos de texto por regex.
-        #    Nunca devolvemos el texto crudo como `analysis`.
+        # ── Último recurso: recuperar los campos sueltos. Nunca el texto crudo.
         def _field(name: str) -> str:
             mm = re.search(r'"' + name + r'"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
             if not mm:
                 return ""
             try:
-                return json.loads('"' + mm.group(1) + '"')
+                return json.loads('"' + mm.group(1) + '"', strict=False)
             except Exception:
                 return mm.group(1)
 
@@ -338,7 +478,7 @@ class BaseAgent:
             "error":      "JSON malformado (recuperado por campos)",
             "score":      _score(),
             "conviction": _field("conviction") or "MEDIUM",
-            "analysis":   _field("analysis"),
+            "analysis":   salvage_analysis_text(text),
             "pros":       [],
             "cons":       [],
         }

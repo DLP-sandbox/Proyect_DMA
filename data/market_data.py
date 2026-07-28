@@ -463,7 +463,12 @@ def _sp500_benchmark_perf() -> dict:
 def _tradingview_technical_snapshot(ticker: str) -> dict:
     """Reconstruye el dict de indicadores (mismas claves que
     compute_technical_indicators) a partir de los valores puntuales de
-    TradingView. {} si no hay datos. NUNCA lanza."""
+    TradingView. {} si no hay datos. NUNCA lanza.
+    Cacheado (TTL corto): técnico y riesgo lo piden en el mismo análisis y así
+    no se golpea dos veces al escáner por ticker."""
+    cached = _load_cache(f"tvsnap_{ticker}", ttl_hours=TTL_RS)
+    if cached:
+        return cached
     r = _tv_row(ticker)
     if not r:
         return {}
@@ -509,6 +514,10 @@ def _tradingview_technical_snapshot(ticker: str) -> dict:
             if v is not None:
                 ind[f"return_{label}"] = v
         ind["_source"] = "tradingview"
+        try:
+            _save_cache(f"tvsnap_{ticker}", ind)
+        except Exception:
+            pass
         return ind
     except Exception:
         return {}
@@ -646,9 +655,13 @@ def get_company_info(ticker: str) -> dict:
         "avg_volume":      info.get("averageVolume", 0),
         "shares_outstanding": info.get("sharesOutstanding", 0),
         "float_shares":    info.get("floatShares", 0),
-        "short_ratio":     info.get("shortRatio", 0),
-        "short_percent":   info.get("shortPercentOfFloat", 0),
-        "beta":            info.get("beta", 1.0),
+        # Short interest y beta con default None (no 0/1.0): un default "truthy"
+        # o un 0 falso (a) impedía que el respaldo TradingView/Nasdaq rellenara
+        # el hueco, y (b) mostraba "0% short" y "beta 1.00" INVENTADOS en cloud
+        # en vez de "sin dato". None deja actuar a los respaldos y a la UI.
+        "short_ratio":     info.get("shortRatio"),
+        "short_percent":   info.get("shortPercentOfFloat"),
+        "beta":            info.get("beta"),
         "pe_ratio":        info.get("trailingPE", None),
         "forward_pe":      info.get("forwardPE", None),
         "ps_ratio":        info.get("priceToSalesTrailing12Months", None),
@@ -691,18 +704,35 @@ def get_company_info(ticker: str) -> dict:
     # se rate-limita desde IPs cloud.
     needs_tv = (not result.get("market_cap") or
                 not result.get("pe_ratio") or
+                not result.get("forward_pe") or
                 not result.get("ev_ebitda") or
                 not result.get("revenue_ttm") or
                 not result.get("profit_margin"))
     if needs_tv:
         tv = _get_company_info_from_tradingview(ticker)
+        # Placeholders "truthy" que deben contar como VACÍO: sin esto, un sector
+        # "Unknown" o un rating "N/A" bloqueaban el relleno de TradingView y se
+        # quedaban para siempre en la UI.
+        _PLACEHOLDERS = {"unknown", "n/a", "n/d", "", "none"}
         for k, v in tv.items():
-            # Solo rellenar campos que estén vacíos/None/0
-            if not result.get(k) and v is not None:
+            cur = result.get(k)
+            is_empty = (not cur) or (isinstance(cur, str) and cur.strip().lower() in _PLACEHOLDERS)
+            if is_empty and v is not None:
                 result[k] = v
         # Re-derivar name si seguía con el ticker como nombre
         if result.get("name") == ticker and tv.get("name"):
             result["name"] = tv["name"]
+
+    # Short interest: si yfinance no lo trajo (None en cloud), completar con
+    # Nasdaq (acciones en corto / float; el float puede venir de TradingView).
+    # Si tampoco hay, se queda None → la UI muestra "N/D", nunca un 0% falso.
+    if result.get("short_percent") is None:
+        si = _get_short_interest_from_nasdaq(
+            ticker, float_shares=result.get("float_shares"))
+        if si.get("short_percent") is not None:
+            result["short_percent"] = si["short_percent"]
+        if result.get("short_ratio") is None and si.get("short_ratio") is not None:
+            result["short_ratio"] = si["short_ratio"]
 
     _save_cache(key, result)
 
@@ -733,6 +763,13 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
                 "beta_1_year", "average_volume_30d_calc",
                 "price_target_average", "recommendation_mark",
                 "earnings_release_next_date",
+                # Shares/float — necesarios para calcular short % del float en
+                # cloud, y crecimiento/EPS forward para las barras y el Fwd P/E
+                "float_shares_outstanding_current",
+                "total_shares_outstanding_fundamental",
+                "earnings_per_share_forecast_next_fy",
+                "total_revenue_yoy_growth_ttm",
+                "earnings_per_share_diluted_yoy_growth_ttm",
             )
             .where(col("name") == ticker.upper())
             .limit(1)
@@ -780,13 +817,39 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
             "gross_margin_yf":     _pct_to_dec("gross_margin"),
             "roe_yf":              _pct_to_dec("return_on_equity"),
             "roa_yf":              _pct_to_dec("return_on_assets"),
+            # Crecimiento YoY: TV lo da en % → a decimal (formato yfinance) para
+            # que compute_quality_ratios lo multiplique por 100 correctamente.
+            # Sin esto, la barra "Crecimiento" salía plana en cloud.
+            "revenue_growth_yf":   _pct_to_dec("total_revenue_yoy_growth_ttm"),
+            "earnings_growth_yf":  _pct_to_dec("earnings_per_share_diluted_yoy_growth_ttm"),
             # Ratios sin conversión (mismo formato en YF y TV)
             "debt_equity_yf":      _f("debt_to_equity"),
             "current_ratio_yf":    _f("current_ratio_quarterly"),
             "beta":           _f("beta_1_year"),
             "avg_volume":     _f("average_volume_30d_calc"),
             "target_price":   _f("price_target_average"),
+            # Shares/float — para el cálculo de short % del float en cloud
+            "float_shares":       _f("float_shares_outstanding_current"),
+            "shares_outstanding": _f("total_shares_outstanding_fundamental"),
         }
+        # Forward P/E calculado si TV no lo trae directo (precio / EPS forward
+        # de consenso). Garantiza que el Forward P/E aparezca en cloud.
+        if out.get("forward_pe") is None:
+            close_px = _f("close")
+            fwd_eps = _f("earnings_per_share_forecast_next_fy")
+            if close_px and fwd_eps and fwd_eps > 0:
+                out["forward_pe"] = round(close_px / fwd_eps, 2)
+
+        # recommendation_mark de TV: 1=Strong Buy … 5=Strong Sell → etiqueta
+        rec_mark = _f("recommendation_mark")
+        if rec_mark is not None:
+            out["analyst_rating"] = (
+                "strong_buy" if rec_mark <= 1.5 else
+                "buy"        if rec_mark <= 2.5 else
+                "hold"       if rec_mark <= 3.5 else
+                "sell"       if rec_mark <= 4.5 else
+                "strong_sell"
+            )
         # Limpiar None entries
         return {k: v for k, v in out.items() if v is not None}
     except Exception:
@@ -1311,6 +1374,45 @@ def _get_insiders_from_nasdaq(ticker: str) -> dict:
     return result
 
 
+def _get_short_interest_from_nasdaq(ticker: str, float_shares=None) -> dict:
+    """Fallback de short interest via Nasdaq cuando yfinance falla (bloqueado
+    en cloud). El endpoint da 'interest' (acciones en corto) y 'daysToCover'.
+    Calcula short_percent = interest / float_shares si hay float (el float
+    puede venir de TradingView). Devuelve {short_percent, short_ratio} — solo
+    lo que consigue — o {}. NUNCA lanza.
+
+    LÍMITE conocido: este endpoint solo publica el short interest de acciones
+    listadas en NASDAQ (verificado: AAPL sí, MCD/NYSE devuelve 0 filas). Para
+    NYSE el valor queda None y la UI muestra "N/D" — honesto, nunca un 0% falso."""
+    rows = []
+    variants = [ticker.upper()]
+    if "-" in ticker:
+        variants.append(ticker.upper().replace("-", "."))
+    try:
+        for tk in variants:
+            data = _nasdaq_json(
+                f"/api/quote/{tk}/short-interest?assetClass=stocks"
+            )
+            rows = (((data or {}).get("shortInterestTable") or {}).get("rows")) or []
+            if rows:
+                break
+        if not rows:
+            return {}
+        latest = rows[0]  # el más reciente (settlementDate desc)
+        out = {}
+        dtc = _nasdaq_num(latest.get("daysToCover"))
+        if dtc is not None:
+            out["short_ratio"] = dtc
+        interest = _nasdaq_num(latest.get("interest"))
+        fs = _nasdaq_num(float_shares) if float_shares else None
+        if interest is not None and fs and fs > 0:
+            # yfinance devuelve short_percent como fracción (0.0137 = 1.37%)
+            out["short_percent"] = interest / fs
+        return out
+    except Exception:
+        return {}
+
+
 def _get_institutional_from_nasdaq(ticker: str) -> dict:
     """Fallback de holders INSTITUCIONALES vía Nasdaq cuando yfinance falla
     (bloqueado en IPs de datacenter — así se guardaron análisis sin la gráfica
@@ -1388,7 +1490,13 @@ def get_holders_data(ticker: str) -> dict:
         inst = stock.institutional_holders
         if inst is not None and not inst.empty:
             result["top_institutions"] = inst.head(10).to_dict(orient="records")
-            result["institutional_ownership_pct"] = float(inst["% Out"].sum()) if "% Out" in inst.columns else None
+            # yfinance cambió la columna de "% Out" a "pctHeld"; soportamos
+            # ambas. El ×100 unifica la escala con la del respaldo Nasdaq
+            # (85.92 = 85.92%): antes este camino devolvía FRACCIÓN y el otro
+            # porcentaje → escalas mezcladas aguas abajo.
+            pct_col = "pctHeld" if "pctHeld" in inst.columns else ("% Out" if "% Out" in inst.columns else None)
+            if pct_col:
+                result["institutional_ownership_pct"] = float(inst[pct_col].sum()) * 100
     except Exception:
         pass
 
@@ -1446,14 +1554,16 @@ def get_holders_data(ticker: str) -> dict:
 
     # Fallback Nasdaq para los holders INSTITUCIONALES si yfinance no los trajo
     # (bloqueado en cloud → la gráfica de Propiedad Institucional salía vacía).
+    # Disparadores POR CAMPO: también dispara si solo falta el % total.
     # Rellena solo lo que falta; nunca pisa datos buenos de yfinance.
-    if not result.get("top_institutions"):
+    need_owners = not result.get("top_institutions")
+    need_pct = result.get("institutional_ownership_pct") is None
+    if need_owners or need_pct:
         ni = _get_institutional_from_nasdaq(ticker)
-        if ni.get("top_institutions"):
+        if need_owners and ni.get("top_institutions"):
             result["top_institutions"] = ni["top_institutions"]
-            if result.get("institutional_ownership_pct") is None \
-                    and ni.get("institutional_ownership_pct") is not None:
-                result["institutional_ownership_pct"] = ni["institutional_ownership_pct"]
+        if need_pct and ni.get("institutional_ownership_pct") is not None:
+            result["institutional_ownership_pct"] = ni["institutional_ownership_pct"]
 
     # Fallback Nasdaq SOLO para insiders si yfinance no los trajo (rate-limit en
     # cloud). No toca la ruta institucional. Rellena solo lo que falta.
@@ -1465,13 +1575,37 @@ def get_holders_data(ticker: str) -> dict:
             result["recent_insider_sells"] = nd.get("recent_insider_sells", 0)
 
     try:
+        # major_holders es la fuente MÁS confiable del % total institucional
+        # (institutionsPercentHeld) e insiders (insidersPercentHeld).
         mh = stock.major_holders
         if mh is not None and not mh.empty:
             result["major_holders_raw"] = mh.to_dict()
+            try:
+                col = mh.columns[0]
+
+                def _mh(name):
+                    if name in mh.index:
+                        v = mh.loc[name, col]
+                        return float(v) if v is not None else None
+                    return None
+
+                inst_held = _mh("institutionsPercentHeld")
+                if inst_held is not None:
+                    result["institutional_ownership_pct"] = inst_held * 100
+                ins_held = _mh("insidersPercentHeld")
+                if ins_held is not None:
+                    result["insiders_percent_held"] = ins_held * 100
+            except Exception:
+                pass
     except Exception:
         pass
 
-    _save_cache(key, result)
+    # NO cachear un resultado inútil: un fallo transitorio de red no debe
+    # quedar congelado como "sin holders" durante todo el TTL (la auto-curación
+    # de arriba mitiga, pero mejor no guardar el hueco de entrada).
+    if result.get("top_institutions") or result.get("institutional_ownership_pct") is not None \
+            or result.get("insider_transactions"):
+        _save_cache(key, result)
     return result
 
 
@@ -1722,10 +1856,63 @@ def get_earnings_from_tradingview(ticker: str) -> dict:
         return {}
 
 
+def _get_earnings_from_nasdaq(ticker: str) -> dict:
+    """Fallback del HISTORIAL de earnings (surprises + beat rate) via Nasdaq
+    cuando yfinance falla. TradingView solo da la fecha del próximo reporte, no
+    el track record; Nasdaq expone los últimos ~4 trimestres de EPS estimado vs
+    reportado para CUALQUIER acción de NASDAQ/NYSE. NUNCA lanza excepción.
+    Devuelve {earnings_history, avg_surprise, beat_count} o {}."""
+    try:
+        rows = []
+        variants = [ticker.upper()]
+        if "-" in ticker:
+            variants.append(ticker.upper().replace("-", "."))
+        for tk in variants:
+            data = _nasdaq_json(f"/api/company/{tk}/earnings-surprise")
+            rows = (((data or {}).get("earningsSurpriseTable") or {}).get("rows")) or []
+            if rows:
+                break
+        now = pd.Timestamp.now()
+        surprises = []
+        for row in rows:
+            est = _nasdaq_num(row.get("consensusForecast"))
+            act = _nasdaq_num(row.get("eps"))
+            surp = _nasdaq_num(row.get("percentageSurprise"))
+            if surp is None and est not in (None, 0) and act is not None:
+                surp = (act - est) / abs(est) * 100
+            if surp is None:
+                continue
+            raw_date = str(row.get("dateReported", ""))
+            try:
+                iso = datetime.strptime(raw_date, "%m/%d/%Y")
+                date_str = iso.strftime("%Y-%m-%d")
+                days_ago = (now - pd.Timestamp(iso)).days
+            except (ValueError, TypeError):
+                date_str = raw_date[:10]
+                days_ago = None
+            surprises.append({
+                "date": date_str,
+                "days_ago": days_ago,
+                "estimate": est,
+                "actual": act,
+                "surprise_pct": float(surp),
+            })
+        if not surprises:
+            return {}
+        return {
+            "earnings_history": surprises,
+            "avg_surprise": sum(s["surprise_pct"] for s in surprises) / len(surprises),
+            "beat_count": sum(1 for s in surprises if s["surprise_pct"] > 0),
+        }
+    except Exception:
+        return {}
+
+
 def get_earnings_data(ticker: str) -> dict:
     """Earnings con días desde HOY al próximo reporte calculados explícitamente.
     Si yfinance falla (rate-limit en cloud), cae automáticamente a TradingView
-    como fallback para garantizar al menos el next_earnings date."""
+    (fecha del próximo reporte) y a Nasdaq (historial de surprises + beat rate)
+    para garantizar que estas secciones nunca queden vacías."""
     key = f"earnings_{ticker}"
     cached = _load_cache(key, ttl_hours=TTL_EARNINGS)
     if cached:
@@ -1792,5 +1979,19 @@ def get_earnings_data(ticker: str) -> dict:
         if tv_fallback.get("next_earnings"):
             result.update(tv_fallback)
 
-    _save_cache(key, result)
+    # HISTORIAL de surprises: TradingView solo da la fecha del próximo reporte,
+    # no el track record. Si yfinance no lo trajo (bloqueado en cloud), Nasdaq
+    # expone los últimos ~4 trimestres de EPS estimado vs reportado → la
+    # gráfica de sorpresas y la tasa de aciertos nunca quedan vacías.
+    if not result.get("earnings_history"):
+        nd = _get_earnings_from_nasdaq(ticker)
+        if nd.get("earnings_history"):
+            result["earnings_history"] = nd["earnings_history"]
+            result.setdefault("avg_surprise", nd.get("avg_surprise"))
+            result.setdefault("beat_count", nd.get("beat_count"))
+
+    # NO cachear un resultado inútil: un fallo transitorio no debe congelar
+    # "sin earnings" durante todo el TTL.
+    if result.get("next_earnings") or result.get("earnings_history"):
+        _save_cache(key, result)
     return result
