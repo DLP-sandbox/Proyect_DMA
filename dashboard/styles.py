@@ -3903,24 +3903,15 @@ div[class*="st-key-sectbar_"] [data-testid="stRadio"] {
     width: 100% !important; display: flex !important; justify-content: center !important;
 }
 div[class*="st-key-sectbar_"] [role="radiogroup"] {
-    /* nowrap SIEMPRE (no solo en móvil): con la barra lateral abierta el ancho
-       útil baja mucho y el menú se partía en 2-3 hileras en pantallas
-       intermedias (~900px). Con nowrap + scroll horizontal de seguridad queda
-       SIEMPRE en una sola hilera; las reglas de abajo lo encogen para que
-       además quepa sin necesidad de desplazarlo. */
-    display: inline-flex !important; justify-content: center;
-    flex-wrap: nowrap !important;
-    max-width: 100%;
-    overflow-x: auto;
-    scrollbar-width: none;
-    gap: 3px;
+    /* `wrap`: en pantallas intermedias el menú se monta en DOS hileras en vez
+       de encogerse — mantiene la tipografía a tamaño completo y legible.
+       Es el comportamiento de la versión de CLIENTES. */
+    display: inline-flex !important; justify-content: center; flex-wrap: wrap; gap: 3px;
     background: var(--surface-1);
     border: 1px solid var(--hairline-2);
     border-radius: 16px;
     padding: 6px;
 }
-div[class*="st-key-sectbar_"] [role="radiogroup"]::-webkit-scrollbar { display: none; }
-div[class*="st-key-sectbar_"] [role="radiogroup"] label { flex: 0 0 auto; }
 div[class*="st-key-sectbar_"] [role="radiogroup"] label {
     margin: 0 !important; padding: 9px 10px !important; border-radius: 10px !important;
     border: 1px solid transparent !important; background: transparent !important;
@@ -3968,53 +3959,6 @@ div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p { c
 div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p::before {
     background: var(--accent); border-color: var(--accent);
     box-shadow: 0 0 8px rgba(var(--accent-rgb),0.6), inset 0 0 0 2.5px rgba(10,11,13,0.55);
-}
-
-/* ── Anchos INTERMEDIOS ───────────────────────────────────────────────────
-   El menú a tamaño completo necesita ~885px, pero el ancho ÚTIL es el de la
-   ventana MENOS la barra lateral (~390px): una ventana de 900px solo deja
-   ~430px. Por eso se encoge en dos escalones, medidos en el navegador, para
-   que las 7 opciones quepan SIEMPRE en una hilera sin desplazarlas.
-   El puntito se dibuja solo en la ACTIVA: ahorra mucho ancho sin perder el
-   indicador de selección. Por encima de 1400px se ve a tamaño completo. */
-
-/* Escalón 1 (1101–1400px): reducción suave. */
-@media (min-width: 1101px) and (max-width: 1400px) {
-    div[class*="st-key-sectbar_"] [role="radiogroup"] {
-        gap: 1px; padding: 4px; border-radius: 14px;
-    }
-    div[class*="st-key-sectbar_"] [role="radiogroup"] label {
-        padding: 7px 5px !important; border-radius: 9px !important;
-    }
-    div[class*="st-key-sectbar_"] [role="radiogroup"] label p {
-        font-size: 9.5px !important; letter-spacing: 0 !important;
-    }
-    div[class*="st-key-sectbar_"] [role="radiogroup"] label p::before {
-        width: 0; height: 0; border-width: 0; margin-right: 0;
-    }
-    div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p::before {
-        width: 7px; height: 7px; border-width: 1.5px; margin-right: 6px;
-    }
-}
-
-/* Escalón 2 (761–1100px): el caso más apretado — ventana mediana CON la barra
-   lateral abierta deja poco más de 400px útiles. */
-@media (min-width: 761px) and (max-width: 1100px) {
-    div[class*="st-key-sectbar_"] [role="radiogroup"] {
-        gap: 0px; padding: 3px; border-radius: 13px;
-    }
-    div[class*="st-key-sectbar_"] [role="radiogroup"] label {
-        padding: 6px 2px !important; border-radius: 9px !important;
-    }
-    div[class*="st-key-sectbar_"] [role="radiogroup"] label p {
-        font-size: 7.4px !important; letter-spacing: 0 !important;
-    }
-    div[class*="st-key-sectbar_"] [role="radiogroup"] label p::before {
-        width: 0; height: 0; border-width: 0; margin-right: 0;
-    }
-    div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p::before {
-        width: 6px; height: 6px; border-width: 1.5px; margin-right: 5px;
-    }
 }
 
 /* ── Iframe estrecho (Whop): el menú DEBE quedar en UNA SOLA HILERA ──────
