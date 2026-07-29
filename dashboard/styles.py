@@ -3861,6 +3861,193 @@ section[data-testid="stSidebar"] {
     }
 }
 
+
+/* ── Barra de secciones del análisis (píldora centrada con puntitos) ─────
+   Radio horizontal como píldora CENTRADA: opciones en mono mayúscula con su
+   PUNTITO; la activa lleva borde redondeado dorado con brillo y el puntito
+   relleno. El radio nativo de Streamlit se oculta y el puntito lo dibuja
+   p::before (control total del estilo). */
+/* OJO: la clase st-key-sectbar_ va en el PROPIO stVerticalBlock (flex column
+   con align-items:start), no en un padre — por eso hay que centrar aquí mismo:
+   align-items:center alinea horizontalmente al hijo (que se encoge al ancho de
+   su contenido). Con un selector descendiente la barra quedaba a la izquierda. */
+div[class*="st-key-sectbar_"] {
+    margin: 2px 0 16px;
+    align-items: center !important;
+    /* Ancla del separador ::after. position:relative NO altera el layout. */
+    position: relative;
+}
+/* Línea separadora dorada con brillo entre el menú y la sección de abajo.
+   Va como ::after ABSOLUTO dentro del hueco de 16px que YA existía (margin
+   inferior): no ocupa espacio, así que ni el menú ni el contenido se mueven
+   un solo píxel. Degradado a los extremos para que no corte en seco. */
+div[class*="st-key-sectbar_"]::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; bottom: -8px;
+    height: 1px;
+    background: linear-gradient(90deg,
+        rgba(var(--accent-rgb), 0) 0%,
+        rgba(var(--accent-rgb), 0.55) 18%,
+        rgba(var(--accent-rgb), 0.75) 50%,
+        rgba(var(--accent-rgb), 0.55) 82%,
+        rgba(var(--accent-rgb), 0) 100%);
+    box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.45),
+                0 0 2px rgba(var(--accent-rgb), 0.60);
+    pointer-events: none;
+}
+div[class*="st-key-sectbar_"] [data-testid="stElementContainer"] {
+    align-items: center !important;
+}
+div[class*="st-key-sectbar_"] [data-testid="stRadio"] {
+    width: 100% !important; display: flex !important; justify-content: center !important;
+}
+div[class*="st-key-sectbar_"] [role="radiogroup"] {
+    /* nowrap SIEMPRE (no solo en móvil): con la barra lateral abierta el ancho
+       útil baja mucho y el menú se partía en 2-3 hileras en pantallas
+       intermedias (~900px). Con nowrap + scroll horizontal de seguridad queda
+       SIEMPRE en una sola hilera; las reglas de abajo lo encogen para que
+       además quepa sin necesidad de desplazarlo. */
+    display: inline-flex !important; justify-content: center;
+    flex-wrap: nowrap !important;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    gap: 3px;
+    background: var(--surface-1);
+    border: 1px solid var(--hairline-2);
+    border-radius: 16px;
+    padding: 6px;
+}
+div[class*="st-key-sectbar_"] [role="radiogroup"]::-webkit-scrollbar { display: none; }
+div[class*="st-key-sectbar_"] [role="radiogroup"] label { flex: 0 0 auto; }
+div[class*="st-key-sectbar_"] [role="radiogroup"] label {
+    margin: 0 !important; padding: 9px 10px !important; border-radius: 10px !important;
+    border: 1px solid transparent !important; background: transparent !important;
+    cursor: pointer; display: flex !important; align-items: center;
+    transition: background var(--dur-2) var(--ease-out),
+                border-color var(--dur-2) var(--ease-out),
+                box-shadow var(--dur-2) var(--ease-out);
+}
+/* Oculta el indicador NATIVO del radio (el círculo de Streamlit y el propio
+   <input>): el puntito lo dibujamos nosotros con p::before. Sin esto, algunos
+   navegadores pintan también el input nativo → salían DOS puntos al
+   seleccionar. El input se mantiene en el DOM (invisible) para que el click en
+   la etiqueta siga funcionando igual. */
+div[class*="st-key-sectbar_"] [role="radiogroup"] label > div:first-child { display: none !important; }
+div[class*="st-key-sectbar_"] [role="radiogroup"] label input[type="radio"] {
+    appearance: none !important; -webkit-appearance: none !important;
+    position: absolute !important; opacity: 0 !important;
+    width: 0 !important; height: 0 !important; margin: 0 !important; padding: 0 !important;
+    border: 0 !important; background: none !important; pointer-events: none !important;
+}
+div[class*="st-key-sectbar_"] [role="radiogroup"] label p {
+    font-family: var(--font-mono) !important; font-size: 11.5px !important;
+    font-weight: 700 !important; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--text-3) !important; margin: 0 !important;
+    display: flex; align-items: center; white-space: nowrap;
+    transition: color var(--dur-2) var(--ease-out);
+}
+div[class*="st-key-sectbar_"] [role="radiogroup"] label p::before {
+    content: ""; width: 9px; height: 9px; border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.28); background: transparent;
+    margin-right: 8px; flex: 0 0 auto;
+    transition: background var(--dur-2) var(--ease-out),
+                border-color var(--dur-2) var(--ease-out),
+                box-shadow var(--dur-2) var(--ease-out);
+}
+div[class*="st-key-sectbar_"] [role="radiogroup"] label:hover { background: rgba(var(--accent-rgb),0.06) !important; }
+div[class*="st-key-sectbar_"] [role="radiogroup"] label:hover p { color: var(--text-2) !important; }
+/* Sección ACTIVA: borde redondeado dorado con brillo + texto y puntito dorados */
+div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) {
+    background: rgba(var(--accent-rgb),0.07) !important;
+    border-color: rgba(var(--accent-rgb),0.55) !important;
+    box-shadow: 0 0 16px rgba(var(--accent-rgb),0.18), inset 0 1px 0 rgba(255,255,255,0.04) !important;
+}
+div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p { color: var(--accent) !important; }
+div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p::before {
+    background: var(--accent); border-color: var(--accent);
+    box-shadow: 0 0 8px rgba(var(--accent-rgb),0.6), inset 0 0 0 2.5px rgba(10,11,13,0.55);
+}
+
+/* ── Anchos INTERMEDIOS ───────────────────────────────────────────────────
+   El menú a tamaño completo necesita ~885px, pero el ancho ÚTIL es el de la
+   ventana MENOS la barra lateral (~390px): una ventana de 900px solo deja
+   ~430px. Por eso se encoge en dos escalones, medidos en el navegador, para
+   que las 7 opciones quepan SIEMPRE en una hilera sin desplazarlas.
+   El puntito se dibuja solo en la ACTIVA: ahorra mucho ancho sin perder el
+   indicador de selección. Por encima de 1400px se ve a tamaño completo. */
+
+/* Escalón 1 (1101–1400px): reducción suave. */
+@media (min-width: 1101px) and (max-width: 1400px) {
+    div[class*="st-key-sectbar_"] [role="radiogroup"] {
+        gap: 1px; padding: 4px; border-radius: 14px;
+    }
+    div[class*="st-key-sectbar_"] [role="radiogroup"] label {
+        padding: 7px 5px !important; border-radius: 9px !important;
+    }
+    div[class*="st-key-sectbar_"] [role="radiogroup"] label p {
+        font-size: 9.5px !important; letter-spacing: 0 !important;
+    }
+    div[class*="st-key-sectbar_"] [role="radiogroup"] label p::before {
+        width: 0; height: 0; border-width: 0; margin-right: 0;
+    }
+    div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p::before {
+        width: 7px; height: 7px; border-width: 1.5px; margin-right: 6px;
+    }
+}
+
+/* Escalón 2 (761–1100px): el caso más apretado — ventana mediana CON la barra
+   lateral abierta deja poco más de 400px útiles. */
+@media (min-width: 761px) and (max-width: 1100px) {
+    div[class*="st-key-sectbar_"] [role="radiogroup"] {
+        gap: 0px; padding: 3px; border-radius: 13px;
+    }
+    div[class*="st-key-sectbar_"] [role="radiogroup"] label {
+        padding: 6px 2px !important; border-radius: 9px !important;
+    }
+    div[class*="st-key-sectbar_"] [role="radiogroup"] label p {
+        font-size: 7.4px !important; letter-spacing: 0 !important;
+    }
+    div[class*="st-key-sectbar_"] [role="radiogroup"] label p::before {
+        width: 0; height: 0; border-width: 0; margin-right: 0;
+    }
+    div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p::before {
+        width: 6px; height: 6px; border-width: 1.5px; margin-right: 5px;
+    }
+}
+
+/* ── Iframe estrecho (Whop): el menú DEBE quedar en UNA SOLA HILERA ──────
+   flex-wrap:nowrap lo garantiza pase lo que pase (con scroll horizontal como
+   red de seguridad), y se reduce todo — fuente, padding, gap — para que quepa.
+   El puntito solo se dibuja en la opción ACTIVA: ahorra mucho ancho sin perder
+   el indicador de selección. */
+@media (max-width: 760px) {
+    div[class*="st-key-sectbar_"] [role="radiogroup"] {
+        flex-wrap: nowrap !important;
+        max-width: 100%;
+        overflow-x: auto;
+        gap: 1px;
+        padding: 3px;
+        border-radius: 11px;
+        scrollbar-width: none;
+    }
+    div[class*="st-key-sectbar_"] [role="radiogroup"]::-webkit-scrollbar { display: none; }
+    div[class*="st-key-sectbar_"] [role="radiogroup"] label {
+        padding: 6px 3px !important; border-radius: 8px !important; flex: 0 0 auto;
+    }
+    div[class*="st-key-sectbar_"] [role="radiogroup"] label p {
+        font-size: 7.1px !important; letter-spacing: 0 !important;
+    }
+    /* Sin puntito en las inactivas (solo texto) → el menú encoge de verdad */
+    div[class*="st-key-sectbar_"] [role="radiogroup"] label p::before {
+        width: 0; height: 0; border-width: 0; margin-right: 0;
+    }
+    div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p::before {
+        width: 6px; height: 6px; border-width: 1.5px; margin-right: 5px;
+    }
+}
+
 </style>
 """
 
