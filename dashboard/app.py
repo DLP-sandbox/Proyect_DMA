@@ -1519,20 +1519,53 @@ def render_overview(analysis: StockAnalysis):
 
     with col_info:
         st.markdown("#### Información")
-        info_data = {
-            "Empresa":   analysis.company_name,
-            "Ticker":    analysis.ticker,
-            "Sector":    analysis.sector,
-            "Horizonte": analysis.time_horizon,
-        }
+        # Info en vivo (cacheada 60s): de aquí salen sector e industria, que
+        # tienen respaldo TradingView y por tanto llegan también en Render.
+        # Se pide UNA vez y se reutiliza abajo en las Métricas Clave.
+        from data.market_data import get_company_info, get_risk_levels
+        _live_info = get_company_info(analysis.ticker) or {}
+
+        # Descripción del negocio SIN IA: se traduce la industria con un mapa
+        # estático (data/industry_labels.py). La descripción larga de yfinance
+        # no sirve aquí — viene en inglés y en Render llega vacía.
+        #
+        # BLINDAJE: si no se consigue el dato (acción poco conocida, fuentes
+        # caídas, o incluso si el módulo fallara al importar), la fila
+        # simplemente NO SE PINTA. Nunca se muestra "—", "Unknown" ni un error:
+        # se construye el diccionario solo con lo que tiene valor real.
+        try:
+            from data.industry_labels import sector_es, describe_business
+            _sector_txt = sector_es(_live_info.get("sector") or analysis.sector)
+            _desc_txt = describe_business(_live_info.get("industry"),
+                                          _live_info.get("sector") or analysis.sector)
+        except Exception:
+            _sector_txt = _desc_txt = ""
+
+        def _hay(v):
+            """Solo se pinta una fila si su valor es texto útil de verdad."""
+            return bool(v) and str(v).strip().lower() not in (
+                "", "—", "-", "n/a", "n/d", "none", "unknown", "nan")
+
+        info_data = {}
+        if _hay(analysis.company_name):
+            info_data["Empresa"] = analysis.company_name
+        if _hay(_sector_txt):
+            info_data["Sector"] = _sector_txt
+        if _hay(_desc_txt):
+            info_data["Descripción"] = _desc_txt
+
         for k, v in info_data.items():
-            # Layout grid (NO flex) — evita que key y value se solapen
-            # cuando el value es largo (típicamente el Horizonte). El value
-            # se limita a 2 líneas con line-clamp; resto se trunca con "...".
+            # Layout grid (NO flex) — evita que key y value se solapen cuando el
+            # value es largo. La Descripción lleva un modificador que le quita el
+            # recorte de 2 líneas: se expande hacia abajo en vez de cortarse
+            # con "…" (hay espacio de sobra en esta columna).
+            cls = "overview-info-value"
+            if k == "Descripción":
+                cls += " overview-info-value--desc"
             st.markdown(
                 f'<div class="overview-info-row">'
                 f'<span class="overview-info-key">{k}</span>'
-                f'<span class="overview-info-value">{v}</span>'
+                f'<span class="{cls}">{v}</span>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -1547,8 +1580,7 @@ def render_overview(analysis: StockAnalysis):
             # current_price con el precio en vivo (TTL 60s); si no está
             # disponible, cae al entry_price persistido (mismo patrón que ya usan
             # la gráfica R/R del Overview y la pestaña de Riesgo).
-            from data.market_data import get_company_info, get_risk_levels
-            _live_info = get_company_info(analysis.ticker) or {}
+            # `_live_info` ya se obtuvo arriba (misma llamada cacheada).
             _current_price = _safe_num(_live_info.get("current_price")) or _safe_num(analysis.entry_price)
             # Target de analistas de get_company_info como respaldo probado en Render.
             _target = _safe_num(analysis.target_price) or _safe_num(_live_info.get("target_price"))

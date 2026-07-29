@@ -109,13 +109,42 @@ class InstitutionalAgent(BaseAgent):
         lines.append(f"**Compras recientes de insiders:** {insider_buys}")
 
         if insider_txns:
+            # OJO — bug real corregido aquí: este bloque leía las claves en
+            # MAYÚSCULA ("Insider", "Shares"…) mientras get_holders_data las
+            # produce en MINÚSCULA ("insider", "shares"…) en sus DOS rutas
+            # (yfinance y respaldo Nasdaq). Resultado: al modelo le llegaban 10
+            # líneas de "- | Unknown (): 0 shares | $0" y opinaba sobre la
+            # actividad de directivos SIN NINGÚN dato real.
+            # `_campo` acepta ambas grafías, así que da igual qué capa cambie:
+            # no puede volver a romperse por un tema de mayúsculas.
+            def _campo(txn, *nombres, default=""):
+                for n in nombres:
+                    for k in (n, n.lower(), n.capitalize(), n.upper()):
+                        if k in txn and txn[k] not in (None, ""):
+                            return txn[k]
+                return default
+
+            def _num(v):
+                # `x != x` descarta NaN: yfinance deja el importe vacío en
+                # algunas operaciones y sin este filtro el modelo leía "$nan".
+                try:
+                    x = float(v)
+                    return x if x == x and x not in (float("inf"), float("-inf")) else 0.0
+                except (TypeError, ValueError):
+                    return 0.0
+
             for txn in insider_txns[:10]:
-                date = str(txn.get("Date", ""))[:10]
-                insider = txn.get("Insider", "Unknown")
-                pos = txn.get("Position", "")
-                shares = txn.get("Shares", 0)
-                val = txn.get("Value", 0)
-                lines.append(f"- {date} | {insider} ({pos}): {shares:,} shares | ${val:,.0f}")
+                date = str(_campo(txn, "date"))[:10]
+                insider = _campo(txn, "insider", default="Unknown")
+                pos = _campo(txn, "position", "relation")
+                shares = _num(_campo(txn, "shares", "sharesTraded", default=0))
+                val = _num(_campo(txn, "value", default=0))
+                tipo = _campo(txn, "type")
+                tipo_txt = f" [{tipo}]" if tipo else ""
+                lines.append(
+                    f"- {date} | {insider} ({pos}){tipo_txt}: "
+                    f"{shares:,.0f} acciones | ${val:,.0f}"
+                )
 
         lines += [
             "",

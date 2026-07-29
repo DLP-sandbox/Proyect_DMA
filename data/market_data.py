@@ -747,6 +747,18 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
     """Fallback de fundamentales via TradingView para los campos críticos que
     se pierden cuando yfinance.info está rate-limitado (Render, Streamlit
     Cloud, AWS en general)."""
+    # Tickers de CLASE: TradingView usa el PUNTO (BRK.B), no el guion que usa
+    # yfinance (BRK-B). Sin esta variante la consulta salía vacía y en Render
+    # el sector/industria de esas acciones se quedaba en "Unknown".
+    for _tk in ([ticker.upper()] +
+                ([ticker.upper().replace("-", ".")] if "-" in ticker else [])):
+        _out = _tv_company_row(_tk)
+        if _out:
+            return _out
+    return {}
+
+
+def _tv_company_row(_tk: str) -> dict:
     try:
         from tradingview_screener import Query, col
         q = (
@@ -771,7 +783,7 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
                 "total_revenue_yoy_growth_ttm",
                 "earnings_per_share_diluted_yoy_growth_ttm",
             )
-            .where(col("name") == ticker.upper())
+            .where(col("name") == _tk)
             .limit(1)
         )
         _, df = q.get_scanner_data()

@@ -3348,6 +3348,15 @@ section[data-testid="stSidebar"] {
     min-width: 0;
 }
 
+/* Descripción del negocio: SIN recorte. Se expande hacia abajo tantas líneas
+   como necesite (hay espacio de sobra en esta columna) en vez de cortarse con
+   "…" como el resto de filas. `display:block` anula el -webkit-box del clamp. */
+.overview-info-value--desc {
+    display: block;
+    -webkit-line-clamp: none;
+    overflow: visible;
+}
+
 /* ── 22. SECTION SPINNERS — para Tickers Populares y Live Market Pulse ──
    Cuando esas secciones están cargando datos de red, mostramos un círculo
    girando + texto debajo, así el usuario sabe que hay algo cargando ahí
