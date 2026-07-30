@@ -106,7 +106,19 @@ def analisis_fresco(analysis) -> bool:
     """True si el análisis tiene menos de ANALYSIS_FRESH_HOURS.
 
     Ante una fecha ilegible o ausente devuelve False, que es el lado seguro:
-    "no me consta que sea fresco" → se rehace. Nunca lanza."""
+    "no me consta que sea fresco" → se rehace. Nunca lanza.
+
+    DESFASE HORARIO — por qué se toleran fechas "del futuro":
+    los timestamps se guardan con `datetime.now()` SIN zona horaria, y el caché
+    de Upstash lo comparten máquinas en husos distintos: Render corre en UTC y
+    una revisión en local puede ir varias horas por detrás. Un análisis hecho en
+    Render se leía aquí como si fuera del futuro (visto de verdad: +4 h) y se
+    daba por caducado → se re-analizaba SIEMPRE, quemando créditos sin motivo.
+    Y un análisis del futuro no puede estar viejo: si la fecha va por delante,
+    lo único que pasa es que los relojes no coinciden. Así que se acepta un
+    desfase de hasta ANALYSIS_FRESH_HOURS por delante (cubre los husos reales,
+    máximo ±14 h) y más allá se considera fecha corrupta → se rehace.
+    """
     try:
         from datetime import datetime
         from config.settings import ANALYSIS_FRESH_HOURS
@@ -114,9 +126,9 @@ def analisis_fresco(analysis) -> bool:
         if not crudo:
             return False
         creado = datetime.fromisoformat(str(crudo)[:26])
+        margen = float(ANALYSIS_FRESH_HOURS)
         horas = (datetime.now() - creado).total_seconds() / 3600.0
-        # Una fecha en el futuro (reloj desajustado) tampoco se da por fresca
-        return 0 <= horas < float(ANALYSIS_FRESH_HOURS)
+        return -margen < horas < margen
     except Exception:
         return False
 
