@@ -130,8 +130,11 @@ class FutureViabilityAgent(BaseAgent):
             "",
             "## Contexto Adicional",
             f"- Empleados: {info.get('employees', 'N/A'):,}" if info.get('employees') else "- Empleados: N/A",
-            f"- Market Cap: ${info.get('market_cap', 0) / 1e9:.1f}B",
-            f"- Beta: {info.get('beta', 1.0):.2f}",
+            # `.get(clave, defecto)` NO protege cuando la clave existe con valor
+            # None (le pasa a beta en varias acciones, p. ej. KO): `None:.2f`
+            # lanzaba TypeError y tumbaba la sección Futuro entera.
+            f"- Market Cap: ${(info.get('market_cap') or 0) / 1e9:.1f}B",
+            f"- Beta: {(info.get('beta') or 1.0):.2f}",
             f"- Dividend Yield: {(info.get('dividend_yield', 0) or 0) * 100:.1f}%",
             "",
             "Analiza la viabilidad futura de este negocio con perspectiva de 3-7 años y retorna el JSON especificado.",

@@ -21,9 +21,17 @@ import json
 
 import requests
 
-# TTL del caché: 30 días. La tesis de inversión es de largo plazo y no cambia
-# en un mes. Los precios/gráficas/indicadores NO se cachean aquí — se refrescan
-# en vivo cada vez que se renderiza el análisis (eso no consume créditos de IA).
+# ── Dos ventanas distintas, y es a propósito ──────────────────────────────
+# CACHE_TTL_SECONDS (30 días) = cuánto SOBREVIVE la fila en Redis.
+# ANALYSIS_FRESH_HOURS (24 h)  = cuánto se REUTILIZA el análisis.
+#
+# ¿Por qué no son lo mismo? Porque la fila cumple DOS funciones:
+#   1. Reutilizar el análisis para no gastar créditos → solo si tiene <24 h.
+#   2. Repoblar el historial de la barra lateral cuando Render reinicia el
+#      contenedor y se lleva el disco por delante (ver la hidratación en
+#      dashboard/app.py). Para esto hace falta que la fila siga ahí.
+# Si la fila expirara a las 24 h, el historial se perdería cada día. Así que se
+# conserva 30 días y el filtro de edad se aplica al LEER (get_cached_analysis).
 CACHE_TTL_SECONDS = 30 * 24 * 60 * 60  # 2,592,000 segundos = 30 días
 
 
@@ -63,12 +71,17 @@ def _command(cmd: list, timeout: float = 4.0):
         return None
 
 
-def get_cached_analysis(ticker: str):
-    """Devuelve un StockAnalysis cacheado (compartido entre todos los usuarios)
-    si existe y es válido; si no, None. None → el caller genera uno fresco con IA.
+def get_cached_analysis(ticker: str, solo_fresco: bool = True):
+    """StockAnalysis del caché compartido, o None.
 
-    La expiración de 30 días la maneja Redis automáticamente (la llave se borra
-    sola), así que si llega algo es porque tiene menos de 30 días."""
+    `solo_fresco=True` (lo normal) devuelve None si el análisis tiene más de
+    ANALYSIS_FRESH_HOURS: así el caller lo rehace desde cero. Este es el punto
+    ÚNICO donde se filtra la edad para todos los que reutilizan un análisis.
+
+    `solo_fresco=False` lo devuelve sin mirar la edad — lo usa la hidratación del
+    historial de la barra lateral, que necesita los análisis viejos para poder
+    LISTARLOS (al hacer clic en uno se rehará, pero primero tiene que aparecer).
+    """
     if not _config():
         return None
     raw = _command(["GET", f"analysis:{ticker.upper()}"])
@@ -79,11 +92,33 @@ def get_cached_analysis(ticker: str):
         from data.persistence import stock_analysis_from_dict
         obj = stock_analysis_from_dict(data)
         # Solo válido si la tesis es real (no un fallback genérico)
-        if obj and len(getattr(obj, "investment_thesis", "") or "") > 200:
-            return obj
+        if not obj or len(getattr(obj, "investment_thesis", "") or "") <= 200:
+            return None
+        if solo_fresco and not analisis_fresco(obj):
+            return None
+        return obj
     except Exception:
         pass
     return None
+
+
+def analisis_fresco(analysis) -> bool:
+    """True si el análisis tiene menos de ANALYSIS_FRESH_HOURS.
+
+    Ante una fecha ilegible o ausente devuelve False, que es el lado seguro:
+    "no me consta que sea fresco" → se rehace. Nunca lanza."""
+    try:
+        from datetime import datetime
+        from config.settings import ANALYSIS_FRESH_HOURS
+        crudo = getattr(analysis, "timestamp", None)
+        if not crudo:
+            return False
+        creado = datetime.fromisoformat(str(crudo)[:26])
+        horas = (datetime.now() - creado).total_seconds() / 3600.0
+        # Una fecha en el futuro (reloj desajustado) tampoco se da por fresca
+        return 0 <= horas < float(ANALYSIS_FRESH_HOURS)
+    except Exception:
+        return False
 
 
 def save_cached_analysis(ticker: str, analysis) -> None:

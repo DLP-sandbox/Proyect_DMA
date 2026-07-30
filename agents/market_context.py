@@ -14,6 +14,7 @@ from agents.base import BaseAgent, AgentReport
 from data.market_data import (
     get_macro_data, get_news, get_earnings_data, get_company_info,
 )
+from data.events import get_catalyst_events
 
 
 SYSTEM_PROMPT = """Eres el estratega de contexto de mercado de un hedge fund de élite. Cubres TRES dominios en un solo análisis integrado: (1) MACRO & rotación sectorial, (2) SENTIMIENTO & narrativa, (3) CATALIZADORES & eventos.
@@ -26,7 +27,12 @@ MACRO: ¿El entorno de tasas, VIX, dólar y rotación sectorial es viento de col
 
 SENTIMIENTO: ¿La narrativa mediática mejora o se deteriora? ¿Hay divergencia sentimiento-fundamentales (oportunidad)? ¿Sentimiento extremo = señal contraria? ¿Riesgo reputacional/ESG?
 
-CATALIZADORES: ¿Earnings próximos con historial de beats? ¿Revisiones de analistas subiendo? ¿Catalizadores asimétricos (<90 días)? ¿Riesgos de evento?
+CATALIZADORES: NO te limites a los earnings. Recibirás una AGENDA DE EVENTOS PRÓXIMOS (conferencias y lanzamientos de producto tipo WWDC/GTC/re:Invent, ex-dividendos, juntas de accionistas, rebalanceos de índice, entregas trimestrales) y los HECHOS RELEVANTES RECIENTES que la empresa ha comunicado oficialmente a la SEC (contratos materiales firmados, compras o ventas de activos, cambios en la directiva, reestructuraciones). Úsalos:
+- Cada pro y cada con debe estar ANCLADO a un evento concreto con su fecha o su plazo en días ("Keynote del 14-sep a 47 días…"), nunca a una generalidad.
+- Un evento marcado como ~aprox es una ESTIMACIÓN por recurrencia anual: menciónalo como ventana aproximada, JAMÁS como fecha confirmada.
+- Pondera por proximidad e impacto: un lanzamiento a 30 días pesa más que una feria a 200.
+- Un contrato material reciente o un cambio de CEO son catalizadores de primer orden aunque no haya earnings cerca.
+¿Hay además revisiones de analistas subiendo? ¿Riesgos de evento (litigios, regulación, dilución)?
 
 Scoring: escala continua 0-100, granular, SIN clustering (no uses 28/50/72 por defecto; calibra al detalle).
 
@@ -82,10 +88,15 @@ Retorna SIEMPRE este JSON con las TRES secciones:
       "key_upcoming_event": "<el catalizador más importante>"
     },
     "sub_scores": {"earnings_momentum": <0-34>, "catalyst_quality": <0-33>, "analyst_revision_trend": <0-33>},
-    "top_catalyst": "<el catalizador #1 que podría mover el precio, en 1 oración corta>"
+    "top_catalyst": "<el catalizador #1 que podría mover el precio, en 1 oración corta>",
+    "upcoming_events": [
+      {"fecha": "<YYYY-MM-DD o 'próximas semanas'>", "evento": "<qué ocurre, breve>", "impacto": "<alto|medio|bajo>", "direccion": "<alcista|bajista|incierto>"}
+    ]
   }
 }
 ```
+
+`upcoming_events`: MÁXIMO 5. Solo eventos futuros RELEVANTES que hayas detectado en las NOTICIAS y que NO estén ya en la agenda que te pasan (esa ya se muestra aparte). Si no encuentras ninguno, devuelve una lista vacía — no rellenes con lo que ya está en la agenda ni inventes fechas.
 
 REGLA: máximo 3 pros y 3 cons por sección — solo los MÁS importantes. Mantén los valores cortos de key_metrics EXACTAMENTE en su forma especificada (el dashboard depende de ellos)."""
 
@@ -101,12 +112,17 @@ class MarketContextAgent(BaseAgent):
             news = get_news(ticker, max_items=15)
             earnings = get_earnings_data(ticker)
             info = get_company_info(ticker)
+            # Agenda de eventos + hechos relevantes de la SEC. Tiene su propia
+            # capa determinista y sus respaldos; NUNCA lanza y en el peor caso
+            # devuelve la estructura vacía, así que no puede tumbar el análisis.
+            eventos = get_catalyst_events(ticker, info, earnings)
 
-            user_message = self._build_message(ticker, info, macro, news, earnings)
+            user_message = self._build_message(ticker, info, macro, news, earnings, eventos)
             # Más tokens que un agente normal porque genera 3 secciones en una
-            # sola respuesta JSON. 3800 evita que se trunque (era el bug: con
-            # 2000 el JSON quedaba incompleto y no parseaba).
-            result = self._call_claude(SYSTEM_PROMPT, user_message, max_tokens=3800)
+            # sola respuesta JSON. 3800 evitaba que se truncara (era el bug: con
+            # 2000 el JSON quedaba incompleto y no parseaba); con la agenda de
+            # eventos y `upcoming_events` el JSON crece, así que sube a 4600.
+            result = self._call_claude(SYSTEM_PROMPT, user_message, max_tokens=4600)
 
             # Si la llamada falló completamente, devolver 3 safe reports
             if "error" in result and "macro" not in result and "score" not in result:
@@ -169,6 +185,12 @@ class MarketContextAgent(BaseAgent):
                     "top_catalyst": c.get("top_catalyst", ""),
                     "next_earnings": earnings.get("next_earnings"),
                     "beat_count": earnings.get("beat_count", 0),
+                    # Se guardan con el análisis (raw_data ya persiste a disco y
+                    # a la nube), así que un análisis reabierto del historial
+                    # conserva su agenda aunque las fuentes estén caídas.
+                    "agenda": (eventos or {}).get("agenda", []),
+                    "hechos_recientes": (eventos or {}).get("hechos_recientes", []),
+                    "upcoming_events": list(c.get("upcoming_events", []) or [])[:5],
                 },
             )
 
@@ -198,7 +220,7 @@ class MarketContextAgent(BaseAgent):
             error=error,
         )
 
-    def _build_message(self, ticker, info, macro, news, earnings) -> str:
+    def _build_message(self, ticker, info, macro, news, earnings, eventos=None) -> str:
         sector = info.get("sector", "Unknown")
 
         def fmt_change(d, key):
@@ -215,8 +237,14 @@ class MarketContextAgent(BaseAgent):
         lines = [
             f"# Contexto de Mercado: {ticker} — {info.get('name', ticker)}",
             f"**Sector:** {sector} | **Industria:** {info.get('industry')} | "
-            f"**Beta:** {info.get('beta', 1.0):.2f} | "
-            f"**Market Cap:** ${info.get('market_cap', 0) / 1e9:.1f}B",
+            # OJO: `.get(clave, defecto)` solo aplica el defecto si la clave NO
+            # existe. get_company_info SÍ devuelve la clave con valor None (KO,
+            # por ejemplo, no trae beta), y entonces `None:.2f` lanzaba
+            # TypeError y este agente combinado moría entero — dejando SIN
+            # análisis a macro, sentimiento Y catalizadores a la vez. El `or`
+            # (idioma ya usado en el resto de agentes) lo blinda.
+            f"**Beta:** {(info.get('beta') or 1.0):.2f} | "
+            f"**Market Cap:** ${(info.get('market_cap') or 0) / 1e9:.1f}B",
             f"**Analyst Rating:** {info.get('analyst_rating', 'N/A')} | "
             f"**Target:** ${info.get('target_price', 'N/A')} vs Actual ${info.get('current_price', 'N/A')}",
             "",
@@ -256,6 +284,30 @@ class MarketContextAgent(BaseAgent):
             for e in eh[:5]:
                 sign = "+" if e["surprise_pct"] > 0 else ""
                 lines.append(f"- {e['date']}: Est ${e['estimate']:.2f} → Act ${e['actual']:.2f} ({sign}{e['surprise_pct']:.1f}%)")
+
+        # ── Agenda de eventos y hechos relevantes (lo que hace que Catalizadores
+        # deje de girar solo alrededor del earnings) ──
+        ev = eventos or {}
+        agenda = ev.get("agenda") or []
+        if agenda:
+            lines.append("")
+            lines.append("### AGENDA DE EVENTOS PRÓXIMOS (ordenada por cercanía):")
+            for e in agenda[:12]:
+                aprox = "  [~aprox: ventana estimada, NO confirmada]" if e.get("estimada") else ""
+                desc = f" — {e.get('desc', '')}" if e.get("desc") else ""
+                lines.append(
+                    f"- {e.get('fecha')} (en {e.get('dias')} días) · "
+                    f"[{e.get('tipo', '')}] **{e.get('titulo', '')}**{desc}{aprox}")
+
+        hechos = ev.get("hechos_recientes") or []
+        if hechos:
+            lines.append("")
+            lines.append("### HECHOS RELEVANTES RECIENTES (comunicados oficiales a la SEC):")
+            for h in hechos[:8]:
+                desc = f" — {h.get('desc', '')}" if h.get("desc") else ""
+                lines.append(
+                    f"- {h.get('fecha')} (hace {h.get('dias')} días) · "
+                    f"**{h.get('titulo', '')}**{desc}")
 
         # ── Noticias (compartidas por sentimiento y catalizadores) ──
         if news:

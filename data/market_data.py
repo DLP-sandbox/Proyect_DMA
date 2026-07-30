@@ -641,7 +641,14 @@ def get_company_info(ticker: str) -> dict:
         info = {}
 
     result = {
-        "name":            info.get("longName", ticker),
+        # OJO: `.get("longName", ticker)` NO protege aquí, porque yfinance
+        # devuelve la clave PRESENTE con valor None para bastantes acciones
+        # (KO es un caso real: longName=None, shortName='Coca-Cola Company
+        # (The)'). El resultado era una cabecera que decía "KO | KO" en vez del
+        # nombre de la empresa. Y el respaldo de TradingView no lo salvaba,
+        # porque solo se consulta cuando faltan datos FINANCIEROS, no el nombre.
+        # `or` encadenado: longName → shortName → el ticker como último recurso.
+        "name":            info.get("longName") or info.get("shortName") or ticker,
         "sector":          info.get("sector", "Unknown"),
         "industry":        info.get("industry", "Unknown"),
         "country":         info.get("country", "US"),
@@ -1622,6 +1629,129 @@ def get_holders_data(ticker: str) -> dict:
 
 
 # ── Noticias ───────────────────────────────────────────────────────────────
+#
+# get_news era la ÚNICA función de datos del proyecto sin cadena de respaldo:
+# dependía solo de yfinance, que Yahoo bloquea desde IPs de datacenter. En la
+# nube se quedaba vacía y tanto Sentimiento como Catalizadores opinaban a ciegas.
+# Estas tres fuentes cubren ese hueco. Todas devuelven EXACTAMENTE el mismo
+# formato de dict que la ruta de yfinance (title/publisher/link/date/age_hours/
+# freshness), así que nada de lo que ya consumía noticias tiene que cambiar.
+
+def _freshness(age_hours: float) -> str:
+    """Etiqueta de frescura — misma escala que usa la ruta de yfinance."""
+    return ("🔥 HOY" if age_hours < 24 else
+            "⚡ Esta semana" if age_hours < 168 else
+            "📅 Antigua")
+
+
+def _news_item(title, publisher, link, pub_dt, now) -> Optional[dict]:
+    """Normaliza una noticia al formato común. None si no hay titular."""
+    if not title:
+        return None
+    pub_dt = pub_dt or now
+    age_hours = (now - pub_dt).total_seconds() / 3600
+    if age_hours < 0:
+        age_hours = 0.0
+    return {
+        "title":     str(title).strip(),
+        "publisher": str(publisher or "").strip(),
+        "link":      str(link or "").strip(),
+        "date":      pub_dt.strftime("%Y-%m-%d %H:%M"),
+        "age_hours": round(age_hours, 1),
+        "freshness": _freshness(age_hours),
+    }
+
+
+def _parse_rfc822(s):
+    """'Tue, 28 Jul 2026 14:03:00 GMT' → datetime naive. None si no se puede."""
+    try:
+        from email.utils import parsedate_to_datetime
+        dt = parsedate_to_datetime(str(s))
+        return dt.replace(tzinfo=None) if dt else None
+    except Exception:
+        return None
+
+
+def _news_from_rss(url: str, publisher_por_defecto: str, max_items: int) -> list:
+    """Lee un feed RSS con la biblioteca estándar (sin dependencias nuevas).
+    NUNCA lanza: ante cualquier problema devuelve []."""
+    try:
+        import xml.etree.ElementTree as ET
+        resp = requests.get(url, timeout=8, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+        })
+        if resp.status_code != 200 or not resp.text:
+            return []
+        raiz = ET.fromstring(resp.content)
+        now = datetime.now()
+        salida = []
+        for item in raiz.iter("item"):
+            titulo = (item.findtext("title") or "").strip()
+            enlace = (item.findtext("link") or "").strip()
+            fuente = (item.findtext("source") or "").strip() or publisher_por_defecto
+            pub_dt = _parse_rfc822(item.findtext("pubDate"))
+            noticia = _news_item(titulo, fuente, enlace, pub_dt, now)
+            if noticia:
+                salida.append(noticia)
+            if len(salida) >= max_items:
+                break
+        return salida
+    except Exception:
+        return []
+
+
+def _get_news_from_nasdaq(ticker: str, max_items: int = 15) -> list:
+    """Respaldo #1: API pública de Nasdaq (no rate-limita IPs de datacenter)."""
+    try:
+        now = datetime.now()
+        for tk in {ticker.upper(), ticker.upper().replace("-", ".")}:
+            datos = _nasdaq_json(
+                f"/api/news/topic/articlebysymbol?q={tk}|stocks&offset=0&limit={max_items}")
+            filas = (datos or {}).get("rows") or []
+            if not filas:
+                continue
+            salida = []
+            for fila in filas:
+                pub_dt = None
+                crudo = fila.get("created") or fila.get("publisher_date")
+                for formato in ("%b %d, %Y", "%Y-%m-%dT%H:%M:%S", "%m/%d/%Y"):
+                    try:
+                        pub_dt = datetime.strptime(str(crudo)[:19], formato)
+                        break
+                    except (ValueError, TypeError):
+                        continue
+                enlace = fila.get("url") or ""
+                if enlace and enlace.startswith("/"):
+                    enlace = f"https://www.nasdaq.com{enlace}"
+                noticia = _news_item(fila.get("title"), fila.get("publisher") or "Nasdaq",
+                                     enlace, pub_dt, now)
+                if noticia:
+                    salida.append(noticia)
+            if salida:
+                return salida[:max_items]
+        return []
+    except Exception:
+        return []
+
+
+def _get_news_from_yahoo_rss(ticker: str, max_items: int = 15) -> list:
+    """Respaldo #2: RSS de Yahoo Finance. Va por una infraestructura distinta a
+    la API que yfinance usa, así que suele responder cuando aquella está cerrada."""
+    return _news_from_rss(
+        f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker.upper()}"
+        f"&region=US&lang=en-US",
+        "Yahoo Finance", max_items)
+
+
+def _get_news_from_google_rss(ticker: str, max_items: int = 15) -> list:
+    """Respaldo #3: Google News. Último recurso, pero prácticamente siempre
+    responde. Se acota la consulta a la acción para no traer ruido homónimo."""
+    consulta = f"{ticker.upper()}+stock+OR+shares"
+    return _news_from_rss(
+        f"https://news.google.com/rss/search?q={consulta}&hl=en-US&gl=US&ceid=US:en",
+        "Google News", max_items)
+
 
 def get_news(ticker: str, max_items: int = 15) -> list[dict]:
     """Noticias ordenadas por fecha descendente (más recientes primero)
@@ -1685,7 +1815,26 @@ def get_news(ticker: str, max_items: int = 15) -> list[dict]:
     except Exception:
         pass
 
-    _save_cache(key, result)
+    # Cadena de respaldo — mismo patrón que get_earnings_data y get_holders_data.
+    # Solo entra en juego si yfinance no trajo NADA (en Render, siempre), así que
+    # donde ya había noticias sale exactamente lo mismo que antes.
+    if not result:
+        for respaldo in (_get_news_from_nasdaq,
+                         _get_news_from_yahoo_rss,
+                         _get_news_from_google_rss):
+            try:
+                result = respaldo(ticker, max_items)
+            except Exception:
+                result = []
+            if result:
+                result.sort(key=lambda x: x.get("age_hours", 9999))
+                result = result[:max_items]
+                break
+
+    # NO cachear un vacío: un fallo transitorio de TODAS las fuentes no debe
+    # congelar "sin noticias" durante todo el TTL.
+    if result:
+        _save_cache(key, result)
     return result
 
 

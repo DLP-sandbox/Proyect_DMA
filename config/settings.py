@@ -16,6 +16,24 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ORCHESTRATOR_MODEL = "claude-haiku-4-5-20251001"
 SUBAGENT_MODEL = "claude-haiku-4-5-20251001"
 
+# ── Vigencia de un análisis ────────────────────────────────────────────────
+# Un análisis vale 24 HORAS. Dentro de esa ventana se reutiliza (y se comparte
+# entre todos los miembros, que es el ahorro de créditos). Pasadas las 24 h,
+# abrirlo lo REHACE DESDE CERO — da igual que venga de la barra lateral, del
+# buscador o del botón del Quick View.
+#
+# Antes se reutilizaba hasta 30 días: las gráficas y los indicadores seguían
+# vivos pero el estudio de la IA se quedaba congelado, y un análisis de hacía
+# cuatro semanas se servía igual que uno de hacía una hora.
+ANALYSIS_FRESH_HOURS = 24
+
+# Freno entre análisis, por sesión. Cada análisis cuesta ~$0.113 y tarda ~85 s,
+# así que sin freno el gasto escala con los clics. Un minuto permite mirar
+# acciones con normalidad pero impide disparar decenas de análisis a base de
+# clics seguidos. Vive en st.session_state (RAM de la sesión): recargar la
+# pestaña lo resetea, por diseño — es un freno suave, no una cuota.
+ANALYSIS_COOLDOWN_SEC = 60
+
 # ── APIs opcionales ────────────────────────────────────────────────────────
 FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 ALPHA_VANTAGE_KEY = os.getenv("ALPHA_VANTAGE_KEY", "")

@@ -1916,6 +1916,119 @@ hr {
 }
 
 /* ─────────────────────────────────────────────────────────────────────
+   AGENDA DE CATALIZADORES — lista cronológica de eventos próximos y de
+   hechos ya comunicados. Reutiliza las mismas superficies, filetes y
+   tipografías que .kpi-tile / .insight-card: no introduce lenguaje visual
+   nuevo, solo lo aplica en formato de lista.
+   ───────────────────────────────────────────────────────────────────── */
+
+.cat-agenda {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 6px 0 10px 0;
+}
+
+.cat-agenda-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    background: var(--surface-1);
+    border: 1px solid var(--hairline);
+    border-left: 2px solid var(--hairline-2);
+    border-radius: var(--r-sm);
+    padding: 10px 14px;
+    box-shadow: var(--inset-hi);
+    animation: fadeInUp var(--dur-3) var(--ease-out) both;
+    transition: border-color var(--dur-2) var(--ease-out),
+                background var(--dur-2) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .cat-agenda-row:hover {
+        border-color: var(--hairline-2);
+        background: var(--surface-2);
+    }
+}
+
+/* Columna izquierda: cuántos días faltan y la fecha exacta debajo */
+.cat-agenda-when {
+    font-family: var(--font-mono);
+    text-align: right;
+    min-width: 62px;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.cat-agenda-days {
+    font-size: 0.95rem;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+}
+
+.cat-agenda-date {
+    font-size: 0.58rem;
+    color: var(--text-2);
+    letter-spacing: 0.06em;
+    margin-top: 2px;
+}
+
+.cat-agenda-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.cat-agenda-title {
+    font-size: 0.86rem;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.35;
+    /* Nunca truncar: el título se envuelve a las líneas que necesite */
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.cat-agenda-desc {
+    font-size: 0.74rem;
+    color: var(--text-2);
+    line-height: 1.5;
+    margin-top: 3px;
+}
+
+.cat-agenda-tag {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.52rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-2);
+    border: 1px solid var(--hairline-2);
+    border-radius: 99px;
+    padding: 1px 7px;
+    margin-left: 6px;
+    vertical-align: 1px;
+    white-space: nowrap;
+}
+
+/* Marca honesta de "fecha estimada por recurrencia, no confirmada" */
+.cat-agenda-aprox {
+    color: var(--text-2);
+    font-family: var(--font-mono);
+    font-size: 0.55rem;
+    letter-spacing: 0.06em;
+    margin-left: 6px;
+    white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+    .cat-agenda-row { gap: 10px; padding: 9px 11px; }
+    .cat-agenda-when { min-width: 52px; }
+    .cat-agenda-days { font-size: 0.85rem; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────
    SKELETON LOADERS — pantallas de carga con shimmer + spinner pequeño
    ───────────────────────────────────────────────────────────────────── */
 

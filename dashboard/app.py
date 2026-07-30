@@ -198,7 +198,11 @@ def init_state():
                         break
                     if tk in st.session_state.analyses:
                         continue
-                    obj = get_cached_analysis(tk)   # ya valida tesis > 200
+                    # `solo_fresco=False`: aquí SÍ queremos los viejos, porque
+                    # esta es la lista del historial. Al hacer clic en uno de
+                    # más de 24 h se rehará desde cero, pero primero tiene que
+                    # aparecer en la barra lateral.
+                    obj = get_cached_analysis(tk, solo_fresco=False)
                     if obj is not None:
                         st.session_state.analyses[tk] = obj
         except Exception:
@@ -464,13 +468,28 @@ def _sb_go_home():
 
 
 def _sb_load_analysis(ticker: str):
-    """Abre un análisis ya cacheado/persistido y limpia los otros modos."""
+    """Abre un análisis del historial y limpia los otros modos.
+
+    Si el análisis tiene más de 24 h, NO se muestra tal cual: se marca como
+    pendiente para que `main()` lo rehaga desde cero con su pantalla de carga.
+    La bandera es necesaria porque esta función corre dentro de `with
+    st.sidebar:` — llamar aquí a `run_analysis` dibujaría el esqueleto y el
+    spinner DENTRO de la barra lateral."""
     st.session_state.selected_ticker = ticker
     st.session_state.quick_view_ticker = None
     st.session_state.scan_results = []
     st.session_state.current_scan_id = None
     st.session_state._show_scan_results = False
     st.session_state.scanner_config_open = False
+
+    try:
+        from data.cache_store import analisis_fresco
+        guardado = (st.session_state.analyses or {}).get(ticker)
+        if guardado is None or not analisis_fresco(guardado):
+            st.session_state._pending_analysis = ticker
+    except Exception:
+        # Ante cualquier duda se rehace: es el lado que da un análisis al día.
+        st.session_state._pending_analysis = ticker
 
 
 def _sb_load_scan(scan_id: str):
@@ -685,25 +704,40 @@ def run_analysis(ticker: str):
 
     _debug_log(f"run_analysis CALLED for ticker={ticker!r}")
 
+    from data.cache_store import analisis_fresco
+
+    # ── Un análisis vale 24 HORAS ──────────────────────────────────────────
+    # Dentro de esa ventana se reutiliza (y se comparte entre miembros: eso es
+    # el ahorro de créditos). Pasadas las 24 h se REHACE DESDE CERO, venga el
+    # clic de la barra lateral, del buscador o del Quick View.
+    #
+    # Antes se reutilizaba hasta 30 días y por eso los análisis se quedaban
+    # viejos: las gráficas seguían vivas pero el estudio de la IA no.
     existing = st.session_state.analyses.get(ticker)
     if existing is not None:
-        # Solo usar caché si la tesis es real (>300 chars) — si es fallback, re-analizar
+        # La tesis corta delata un fallback: eso nunca se reutiliza.
         thesis_len = len(getattr(existing, "investment_thesis", "") or "")
-        _debug_log(f"  cache hit, thesis_len={thesis_len}")
-        if thesis_len > 200:
-            _debug_log(f"  using cached analysis, rerunning")
+        if thesis_len > 200 and analisis_fresco(existing):
+            _debug_log(f"  análisis de sesión FRESCO ({existing.timestamp[:16]}) → se reutiliza")
             st.session_state.selected_ticker = ticker
             st.session_state.quick_view_ticker = None
             st.rerun()
             return
-        else:
-            del st.session_state.analyses[ticker]
-            _debug_log(f"  deleted bad cache")
+        _debug_log(f"  análisis de sesión descartado (tesis={thesis_len}, "
+                   f"fresco={analisis_fresco(existing)}) → se rehace")
+        # NO se borra de session_state: si el cooldown frena el análisis, el
+        # miembro debe poder seguir viendo lo que ya había en vez de una
+        # pantalla vacía. Se sobreescribirá al terminar el análisis nuevo.
 
-    # ── Caché COMPARTIDO (Upstash) — si OTRO usuario ya analizó este ticker en
-    # los últimos 30 días, reutilizamos su análisis sin gastar créditos. Las
-    # gráficas, precio, P/E e indicadores se refrescan en vivo al renderizar.
+    # ── Caché COMPARTIDO (Upstash) — si OTRO miembro ya analizó este ticker en
+    # las últimas 24 h, reutilizamos su análisis sin gastar créditos. El filtro
+    # de edad va dentro de get_cached_analysis.
     # Es no-op si no hay credenciales de Upstash (vuelve al comportamiento de hoy).
+    #
+    # OJO CON EL ORDEN: esto va ANTES del cooldown a propósito. Reutilizar el
+    # análisis de otro miembro no cuesta ni un crédito ni un segundo de servidor,
+    # así que frenarlo no protegería nada y sí castigaría al miembro (con caché
+    # compartido, la mayoría de aperturas son justo este caso).
     try:
         from data.cache_store import get_cached_analysis
         shared = get_cached_analysis(ticker)
@@ -726,6 +760,28 @@ def run_analysis(ticker: str):
         except Exception:
             pass
         st.rerun()
+        return
+
+    # ── Cooldown: freno único, justo antes de gastar ───────────────────────
+    # A partir de aquí SÍ se consumen créditos (~$0.113 y ~85 s), así que este
+    # es el sitio correcto para el freno. Antes vivía solo en el buscador con 60
+    # minutos, y el botón del Quick View se lo saltaba; ahora cubre por igual el
+    # buscador, la barra lateral y el Quick View, porque todos pasan por aquí.
+    from config.settings import ANALYSIS_COOLDOWN_SEC
+    _ultimo = st.session_state.get("_last_analysis_finished_at", 0)
+    _pasado = time.time() - _ultimo
+    if _pasado < ANALYSIS_COOLDOWN_SEC:
+        _restante = max(1, int(round(ANALYSIS_COOLDOWN_SEC - _pasado)))
+        st.warning(
+            f"⏳ Espera **{_restante} s** para lanzar otro análisis "
+            f"(freno para no saturar el servidor)."
+        )
+        # Se deja ver el análisis que hubiera, aunque esté viejo: mejor eso que
+        # una pantalla en blanco. Al pasar el freno, otro clic lo rehará.
+        if existing is not None:
+            st.session_state.selected_ticker = ticker
+            st.session_state.quick_view_ticker = None
+        st.session_state.analyzing = False
         return
 
     st.session_state.analyzing = True
@@ -2458,6 +2514,229 @@ def render_institutional(analysis: StockAnalysis):
     _render_analysis_card(report, title="Análisis Completo de Flujo")
 
 
+# ── Actualización en vivo ("Al día de hoy") ───────────────────────────────
+# El análisis profundo se reutiliza hasta 30 días. Estas funciones lo mantienen
+# vivo con UNA llamada barata al día (compartida entre todos los miembros) sin
+# tocar ni una coma del objeto almacenado.
+#
+# REGLA DE ORO: la aritmética del scoring se queda en Python. El modelo solo
+# dice qué áreas se mueven y a cuánto; el composite se recompone con los WEIGHTS
+# de siempre y la recomendación sale de los THRESHOLDS de siempre. Así el modelo
+# no puede inventarse ni una nota global ni un enum de recomendación.
+
+_TIPO_EVENTO_ES = {
+    "earnings":    "Resultados",
+    "dividendo":   "Dividendo",
+    "producto":    "Producto",
+    "conferencia": "Conferencia",
+    "operativo":   "Operativo",
+    "accionista":  "Accionistas",
+    "regulatorio": "Regulatorio",
+    "macro":       "Mercado",
+}
+
+
+def _color_por_dias(dias):
+    """Mismo criterio de urgencia que el tile de 'Próximo Reporte', para que
+    toda la sección hable el mismo idioma de color."""
+    if dias is None:
+        return "#5E6570"
+    if dias < 7:
+        return "#F1495F"
+    if dias < 30:
+        return "#E2B25C"
+    return "#6FA3E0"
+
+
+def _fecha_es(iso):
+    """'2026-09-14' → '14 SEP'. Devuelve la cadena original si no parsea."""
+    meses = ("ENE", "FEB", "MAR", "ABR", "MAY", "JUN",
+             "JUL", "AGO", "SEP", "OCT", "NOV", "DIC")
+    try:
+        d = datetime.strptime(str(iso)[:10], "%Y-%m-%d").date()
+        return f"{d.day} {meses[d.month - 1]}"
+    except (ValueError, TypeError, IndexError):
+        return str(iso or "")
+
+
+def _agenda_normalizada(eventos):
+    """Recalcula los días desde HOY y descarta lo ya pasado.
+
+    CLAVE para el historial: un análisis guardado hace semanas trae el campo
+    `dias` congelado en el momento en que se generó. Si se pintara tal cual,
+    diría "en 5 días" para un evento que ya ocurrió. Aquí la única fuente de
+    verdad es la FECHA; los días se vuelven a calcular siempre."""
+    hoy = datetime.now().date()
+    salida = []
+    for e in eventos or []:
+        if not isinstance(e, dict):
+            continue
+        try:
+            f = datetime.strptime(str(e.get("fecha", ""))[:10], "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            continue
+        if f < hoy:
+            continue
+        copia = dict(e)
+        copia["fecha"] = f.isoformat()
+        copia["dias"] = (f - hoy).days
+        salida.append(copia)
+    salida.sort(key=lambda x: x["fecha"])
+    return salida
+
+
+def _render_agenda_catalizadores(analysis: StockAnalysis, rd: dict):
+    """Agenda de eventos próximos + hechos relevantes ya comunicados.
+
+    Fusiona lo guardado con el análisis (`raw_data`) con una consulta fresca —
+    que normalmente es un acierto de caché e instantánea — para que funcione
+    igual en un análisis nuevo y en uno reabierto del historial.
+
+    Si no hay NADA que mostrar, no dibuja absolutamente nada: nunca un error,
+    nunca un 'N/D' vacío."""
+    import html as _html
+
+    agenda_guardada = rd.get("agenda") or []
+    hechos_guardados = rd.get("hechos_recientes") or []
+
+    agenda_fresca, hechos_frescos = [], []
+    try:
+        from data.events import get_catalyst_events
+        from data.market_data import get_company_info, get_earnings_data
+        frescos = get_catalyst_events(
+            analysis.ticker,
+            get_company_info(analysis.ticker) or {},
+            get_earnings_data(analysis.ticker) or {},
+        ) or {}
+        agenda_fresca = frescos.get("agenda") or []
+        hechos_frescos = frescos.get("hechos_recientes") or []
+    except Exception:
+        # Si la consulta falla, se sigue con lo que quedó guardado en el análisis
+        pass
+
+    # Fusionar sin duplicar (título + fecha), priorizando lo fresco
+    vistos, agenda = set(), []
+    for ev in _agenda_normalizada(list(agenda_fresca) + list(agenda_guardada)):
+        clave = (ev.get("titulo"), ev.get("fecha"))
+        if clave in vistos:
+            continue
+        vistos.add(clave)
+        agenda.append(ev)
+
+    if agenda:
+        st.markdown('<div class="section-title-bar">Agenda de Catalizadores</div>',
+                    unsafe_allow_html=True)
+        filas = []
+        for ev in agenda[:10]:
+            dias = ev.get("dias")
+            color = _color_por_dias(dias)
+            dias_txt = "HOY" if dias == 0 else f"{dias}d"
+            tipo = _TIPO_EVENTO_ES.get(ev.get("tipo"), "")
+            tag = f'<span class="cat-agenda-tag">{_html.escape(tipo)}</span>' if tipo else ""
+            aprox = ('<span class="cat-agenda-aprox">· fecha aprox.</span>'
+                     if ev.get("estimada") else "")
+            desc = _html.escape(str(ev.get("desc", "") or ""))
+            desc_html = f'<div class="cat-agenda-desc">{desc}</div>' if desc else ""
+            filas.append(
+                f'<div class="cat-agenda-row" style="border-left-color:{color};">'
+                f'  <div class="cat-agenda-when">'
+                f'    <div class="cat-agenda-days" style="color:{color};">{dias_txt}</div>'
+                f'    <div class="cat-agenda-date">{_fecha_es(ev.get("fecha"))}</div>'
+                f'  </div>'
+                f'  <div class="cat-agenda-main">'
+                f'    <div class="cat-agenda-title">{_html.escape(str(ev.get("titulo", "")))}'
+                f'{tag}{aprox}</div>'
+                f'{desc_html}'
+                f'  </div>'
+                f'</div>'
+            )
+        st.markdown(f'<div class="cat-agenda">{"".join(filas)}</div>',
+                    unsafe_allow_html=True)
+
+    # ── Hechos ya comunicados oficialmente (SEC) ──
+    vistos_h, hechos = set(), []
+    for h in list(hechos_frescos) + list(hechos_guardados):
+        if not isinstance(h, dict) or not h.get("fecha"):
+            continue
+        clave = (h.get("codigo"), h.get("fecha"))
+        if clave in vistos_h:
+            continue
+        vistos_h.add(clave)
+        hechos.append(h)
+    hechos.sort(key=lambda h: str(h.get("fecha", "")), reverse=True)
+
+    if hechos:
+        st.markdown('<div class="section-title-bar">Hechos Relevantes Recientes</div>',
+                    unsafe_allow_html=True)
+        hoy = datetime.now().date()
+        filas = []
+        for h in hechos[:6]:
+            try:
+                f = datetime.strptime(str(h["fecha"])[:10], "%Y-%m-%d").date()
+                dias_txt = "hoy" if (hoy - f).days == 0 else f"-{(hoy - f).days}d"
+            except (ValueError, TypeError, KeyError):
+                dias_txt = ""
+            desc = _html.escape(str(h.get("desc", "") or ""))
+            desc_html = f'<div class="cat-agenda-desc">{desc}</div>' if desc else ""
+            filas.append(
+                f'<div class="cat-agenda-row" style="border-left-color:#5E6570;">'
+                f'  <div class="cat-agenda-when">'
+                f'    <div class="cat-agenda-days" style="color:#8D949E;">{dias_txt}</div>'
+                f'    <div class="cat-agenda-date">{_fecha_es(h.get("fecha"))}</div>'
+                f'  </div>'
+                f'  <div class="cat-agenda-main">'
+                f'    <div class="cat-agenda-title">{_html.escape(str(h.get("titulo", "")))}'
+                f'<span class="cat-agenda-tag">SEC</span></div>'
+                f'{desc_html}'
+                f'  </div>'
+                f'</div>'
+            )
+        st.markdown(f'<div class="cat-agenda">{"".join(filas)}</div>',
+                    unsafe_allow_html=True)
+
+    # ── Eventos que la IA detectó en la prensa y no están en la agenda ──
+    # Van en su propio bloque y NUNCA mezclados con la agenda: esos vienen de
+    # fuentes verificables (calendario, SEC, dividendos) y estos de titulares.
+    # El modelo tiende a repetir aquí lo que ya le pasamos en la agenda pese a
+    # pedirle que no lo haga, así que se filtra por FECHA de forma determinista:
+    # si ya hay un evento verificado ese día, el de prensa sobra. Si no queda
+    # ninguno, el bloque simplemente no se dibuja.
+    fechas_agenda = {e.get("fecha") for e in agenda}
+    detectados = []
+    for ev in (rd.get("upcoming_events") or [])[:5]:
+        if not isinstance(ev, dict) or not str(ev.get("evento", "")).strip():
+            continue
+        if str(ev.get("fecha", ""))[:10] in fechas_agenda:
+            continue
+        detectados.append(ev)
+
+    if detectados:
+        st.markdown('<div class="section-title-bar">Detectado en Noticias</div>',
+                    unsafe_allow_html=True)
+        colores_dir = {"alcista": "#3DD68C", "bajista": "#F1495F"}
+        filas = []
+        for ev in detectados:
+            direccion = str(ev.get("direccion", "") or "").lower()
+            color = colores_dir.get(direccion, "#E2B25C")
+            impacto = str(ev.get("impacto", "") or "").strip()
+            tag = (f'<span class="cat-agenda-tag">impacto {_html.escape(impacto)}</span>'
+                   if impacto else "")
+            cuando = _html.escape(str(ev.get("fecha", "") or "").strip())
+            filas.append(
+                f'<div class="cat-agenda-row" style="border-left-color:{color};">'
+                f'  <div class="cat-agenda-when">'
+                f'    <div class="cat-agenda-date" style="text-align:right;">{cuando}</div>'
+                f'  </div>'
+                f'  <div class="cat-agenda-main">'
+                f'    <div class="cat-agenda-title">'
+                f'{_html.escape(str(ev.get("evento", "")))}{tag}</div>'
+                f'  </div>'
+                f'</div>'
+            )
+        st.markdown(f'<div class="cat-agenda">{"".join(filas)}</div>',
+                    unsafe_allow_html=True)
+
+
 def render_catalysts(analysis: StockAnalysis):
     report = analysis.reports.get("catalysts")
     if report is None:
@@ -2562,6 +2841,10 @@ def render_catalysts(analysis: StockAnalysis):
         fig = build_earnings_history_chart(eh)
         _chart(fig, use_container_width=True,
                         key=f"chart_catalysts_earn_{analysis.ticker}")
+
+    # ── Agenda de eventos + hechos relevantes ──
+    # Va DESPUÉS del track record para no alterar nada de lo que ya había.
+    _render_agenda_catalizadores(analysis, rd)
 
     # ── Top Catalyst destacado ──
     top_cat = rd.get("top_catalyst", "")
@@ -3747,20 +4030,11 @@ def render_welcome():
             if not is_valid:
                 st.error(error_msg)
             else:
-                # Cooldown de 60 min entre análisis — vive SOLO en st.session_state
-                # (RAM volátil de la sesión actual). Recargar la pestaña lo resetea
-                # por diseño. Es un freno suave para no saturar el servidor.
-                ANALYSIS_COOLDOWN_SEC = 3600  # 60 minutos
-                last_finished = st.session_state.get("_last_analysis_finished_at", 0)
-                elapsed = time.time() - last_finished
-                if elapsed < ANALYSIS_COOLDOWN_SEC:
-                    remaining_min = max(1, int(round((ANALYSIS_COOLDOWN_SEC - elapsed) / 60)))
-                    st.warning(
-                        f"⏳ Tienes un cooldown de ~**{remaining_min} min** activo "
-                        f"para no saturar el servidor."
-                    )
-                else:
-                    run_analysis(clean_ticker)
+                # El cooldown ya NO se comprueba aquí: vive dentro de
+                # `run_analysis`, que es por donde pasan todos los caminos (este
+                # buscador, la barra lateral y el botón del Quick View). Antes
+                # estaba solo aquí, así que el Quick View se lo saltaba.
+                run_analysis(clean_ticker)
         if scan_btn:
             # Abre la página de configuración del scanner (no corre scan directo)
             st.session_state.scanner_config_open = True
@@ -3953,6 +4227,16 @@ def main():
     if (not in_welcome) and (not has_selected_analysis):
         render_top_nav()
 
+    # ── Análisis pendiente de rehacer ──────────────────────────────────────
+    # La barra lateral no puede lanzarlo ella misma (se dibuja dentro de
+    # `with st.sidebar:` y el esqueleto de carga saldría ahí dentro), así que
+    # deja el ticker marcado y se ejecuta AQUÍ, en el cuerpo principal, con la
+    # misma pantalla de carga y el mismo spinner progresivo que un análisis
+    # nuevo. La bandera se consume antes de llamar para que no pueda reentrar.
+    _pendiente = st.session_state.pop("_pending_analysis", None)
+    if _pendiente:
+        run_analysis(_pendiente)
+
     selected = st.session_state.selected_ticker
     qv = st.session_state.get("quick_view_ticker")
 
@@ -4002,6 +4286,7 @@ def main():
     color = score_color(score)
     compound_badge = ('<span class="compound-machine-badge">COMPOUNDER</span>'
                       if getattr(analysis, "is_compound_machine", False) else "")
+    fecha_txt = analysis.timestamp[:10]
 
     st.markdown(
         f'<div class="stock-header">'
@@ -4010,7 +4295,7 @@ def main():
         f'<span>{rec_badge}</span>'
         f'{compound_badge}'
         f'<span class="stock-header-score" style="color:{color};">{score:.1f}<span style="font-size:0.75rem;color:#8D949E;font-weight:400;">/100</span></span>'
-        f'<span style="color:#5E6570;font-family:JetBrains Mono;font-size:0.7rem;">{analysis.timestamp[:10]}</span>'
+        f'<span style="color:#5E6570;font-family:JetBrains Mono;font-size:0.7rem;">{fecha_txt}</span>'
         f'</div>',
         unsafe_allow_html=True,
     )
