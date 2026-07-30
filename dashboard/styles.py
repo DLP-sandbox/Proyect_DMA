@@ -4114,6 +4114,158 @@ div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p::be
     }
 }
 
+/* ─────────────────────────────────────────────────────────────────────
+   SIDEBAR — TARJETAS DE ANÁLISIS (sb-card)
+   Tarjeta clicable por análisis guardado: fila ticker + DLP Score, fila
+   badge, y un st.button overlay invisible que cubre toda la tarjeta.
+   TODO son identificadores NUEVOS (st-key-sbcard_ / st-key-sbcardbtn_ /
+   __rk_ / .sb-card-*): no se redefine sb_a_/sb_s_/__rec_/.sb-badge-wrap,
+   que siguen sirviendo a las filas de escaneos.
+   ───────────────────────────────────────────────────────────────────── */
+
+/* Contenedor = tarjeta. st.container(key="sbcard_<TK>__rk_<slug>") pone la
+   clase en su propio stVerticalBlock (mismo patrón que sectbar_).
+   MISMO LENGUAJE que los KPI tiles (.kpi-tile): surface-1, hairline, radio
+   r-sm, brillo interior sutil, hover con lift de 1px — y el termómetro
+   .meter abajo marcando el DLP Score, igual que en los indicadores. */
+[data-testid="stSidebar"] div[class*="st-key-sbcard_"] {
+    position: relative;
+    background: var(--surface-1);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-sm);
+    padding: 12px 14px;
+    box-shadow: var(--inset-hi);
+    transition: background var(--dur-2) var(--ease-out),
+                border-color var(--dur-2) var(--ease-out),
+                transform var(--dur-2) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+    [data-testid="stSidebar"] div[class*="st-key-sbcard_"]:hover {
+        background: var(--surface-2);
+        border-color: var(--hairline-2);
+        transform: translateY(-1px);
+    }
+}
+[data-testid="stSidebar"] div[class*="st-key-sbcard_"]:active {
+    transform: scale(0.99);
+}
+
+/* Fila 1: ticker (izq) + DLP Score (der, mismo lenguaje que el header) */
+[data-testid="stSidebar"] .sb-card-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+[data-testid="stSidebar"] .sb-card-ticker {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 0.8rem;
+    letter-spacing: 0.02em;
+    color: var(--text-hi) !important;      /* gana al *{color} del sidebar */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* El color por score llega como custom property inline (--sc) desde Python:
+   inmune al [data-testid="stSidebar"] * { color: … !important } global. */
+[data-testid="stSidebar"] .sb-card-score {
+    font-family: var(--font-mono);
+    font-weight: 800;
+    font-size: 0.92rem;
+    letter-spacing: 0.01em;
+    color: var(--sc, var(--text-hi)) !important;
+    white-space: nowrap;
+    flex: 0 0 auto;
+}
+[data-testid="stSidebar"] .sb-card-score-max {
+    font-size: 0.6rem;
+    font-weight: 400;
+    color: #8D949E !important;             /* mismo gris que el /100 del header */
+    margin-left: 1px;
+}
+
+/* Fila 2: el badge reutiliza .sb-badge-wrap TAL CUAL; solo un respiro local
+   (scope de tarjeta → cero efecto en las filas de escaneo hermanas). */
+[data-testid="stSidebar"] div[class*="st-key-sbcard_"] .sb-badge-wrap {
+    padding-top: 8px;
+}
+
+/* El margin-bottom NEGATIVO global del stMarkdownContainer (compensa gaps de
+   Streamlit en el resto de la app) hacía que el badge sobresaliera del borde
+   inferior de la tarjeta. Dentro de la tarjeta se anula: así el contenido
+   respeta el padding inferior y el badge respira sin solaparse. */
+[data-testid="stSidebar"] div[class*="st-key-sbcard_"] [data-testid="stMarkdownContainer"] {
+    margin-bottom: 0 !important;
+}
+
+/* Overlay clicable: el contenedor del botón (clase st-key-sbcardbtn_) cubre
+   toda la tarjeta, invisible. El label real ("◈ TSLA") queda para lectores
+   de pantalla y tests; opacity (no visibility) lo mantiene en el árbol de
+   accesibilidad. */
+[data-testid="stSidebar"] [class*="st-key-sbcardbtn_"] {
+    position: absolute !important;
+    inset: 0 !important;
+    /* Streamlit escribe width inline en el stElementContainer y le ganaría
+       a inset → forzar auto para que left:0 + right:0 lo estiren completo. */
+    width: auto !important;
+    min-width: 0 !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    z-index: 5;
+    opacity: 0 !important;
+}
+[data-testid="stSidebar"] [class*="st-key-sbcardbtn_"] [data-testid="stButton"] {
+    animation: none !important;   /* anula slideInLeft + delays nth-child */
+    width: 100% !important;
+    height: 100% !important;
+}
+[data-testid="stSidebar"] [class*="st-key-sbcardbtn_"] button {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    border-radius: var(--r-sm) !important;
+    transform: none !important;   /* anula el translate3d del hover genérico */
+    cursor: pointer;
+}
+
+/* El termómetro dentro de la tarjeta: un pelín de aire extra sobre el meter
+   (scope local — el .meter de los tiles del main queda intacto). */
+[data-testid="stSidebar"] div[class*="st-key-sbcard_"] .meter {
+    margin-top: 11px;
+}
+
+/* Foco de teclado: el anillo se pinta en la TARJETA (el outline del botón
+   overlay quedaría invisible bajo su opacity:0). */
+[data-testid="stSidebar"] div[class*="st-key-sbcard_"]:has(button:focus-visible) {
+    outline: 2px solid rgba(var(--accent-rgb), 0.55);
+    outline-offset: 2px;
+}
+
+/* Divisor entre tarjetas — mismo patrón que el separador del sectbar
+   (::after ABSOLUTO dentro del gap ya existente: no ocupa espacio, nada se
+   mueve) pero gris-blanco, más corto y con brillo mínimo. Solo se dibuja
+   cuando la SIGUIENTE es otra tarjeta → la última no lo lleva.
+   OJO estructura 1.50: cada container keyed va envuelto en un
+   [data-testid="stLayoutWrapper"] → la adyacencia se mira entre wrappers,
+   pero el ::after se ancla en la tarjeta (que ya es position:relative). */
+[data-testid="stSidebar"] [data-testid="stLayoutWrapper"]:has(+ [data-testid="stLayoutWrapper"] div[class*="st-key-sbcard_"]) > div[class*="st-key-sbcard_"]::after {
+    content: "";
+    position: absolute;
+    left: 16px; right: 16px; bottom: -9px;
+    height: 1px;
+    background: linear-gradient(90deg,
+        rgba(255,255,255,0)    0%,
+        rgba(255,255,255,0.13) 18%,
+        rgba(255,255,255,0.22) 50%,
+        rgba(255,255,255,0.13) 82%,
+        rgba(255,255,255,0)    100%);
+    box-shadow: 0 0 6px rgba(255,255,255,0.10);
+    pointer-events: none;
+}
+
 </style>
 """
 

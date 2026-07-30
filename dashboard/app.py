@@ -614,16 +614,49 @@ def render_sidebar():
                 ticker = analysis.ticker
                 rec = analysis.recommendation or "EN OBSERVACIÓN"
                 rec_slug = _REC_TO_SLUG.get(rec, "watch")
-                btn_key = f"sb_a_{ticker}__rec_{rec_slug}"
-                col_t, col_b = st.columns([5, 6], gap="small")
-                with col_t:
-                    if st.button(f"◈ {ticker}", key=btn_key, use_container_width=True,
-                                 help=f"Abrir análisis de {ticker} ({rec})"):
+                # Key → clase CSS: solo caracteres seguros (BRK.B → BRK_B)
+                tk_safe = "".join(c if (c.isalnum() or c in "_-") else "_"
+                                  for c in ticker)
+                score = float(getattr(analysis, "composite_score", 0) or 0)
+                color = score_color(score)
+                badge_html = get_recommendation_badge(rec)
+
+                # Tarjeta clicable: el container keyed recibe la clase
+                # st-key-sbcard_… en su propio stVerticalBlock (mismo patrón
+                # que sectbar_) y el CSS lo pinta como tarjeta. El sufijo
+                # __rk_ codifica el rating para el acento izquierdo SIN
+                # reutilizar __rec_ (así el CSS legacy no matchea jamás).
+                # Termómetro (mismo .meter/.meter-dot de los KPI tiles) con el
+                # dot en la posición del DLP Score y SU MISMO color, para que
+                # número y dot cuenten la misma historia.
+                _pct = max(0.0, min(100.0, score))
+                _glow = {"#3DD68C": "61,214,140", "#E2B25C": "226,178,92",
+                         "#F1495F": "241,73,95"}.get(color, "226,178,92")
+                meter_html = (
+                    f'<div class="meter"><span class="meter-dot" '
+                    f'style="left:{_pct:.0f}%;background:{color};'
+                    f'box-shadow:0 0 0 3px rgba({_glow},0.18), '
+                    f'0 0 8px rgba({_glow},0.45);"></span></div>'
+                )
+
+                with st.container(key=f"sbcard_{tk_safe}__rk_{rec_slug}"):
+                    st.markdown(
+                        f'<div class="sb-card-head">'
+                        f'<span class="sb-card-ticker">◈ {ticker}</span>'
+                        f'<span class="sb-card-score" style="--sc:{color};">'
+                        f'{score:.1f}'
+                        f'<span class="sb-card-score-max">/100</span></span>'
+                        f'</div>'
+                        f'<div class="sb-badge-wrap">{badge_html}</div>'
+                        f'{meter_html}',
+                        unsafe_allow_html=True,
+                    )
+                    # Overlay invisible (CSS: absolute inset:0, opacity:0)
+                    # que hace clicable TODA la tarjeta. Label real por
+                    # accesibilidad y tests.
+                    if st.button(f"◈ {ticker}", key=f"sbcardbtn_{tk_safe}"):
                         _sb_load_analysis(ticker)
                         st.rerun()
-                with col_b:
-                    st.markdown(f'<div class="sb-badge-wrap">{get_recommendation_badge(rec)}</div>',
-                                unsafe_allow_html=True)
 
         # ── Separador ───────────────────────────────────────────────────
         st.markdown('<div class="sb-section-divider"></div>', unsafe_allow_html=True)
