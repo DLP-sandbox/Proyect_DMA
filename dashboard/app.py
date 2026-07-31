@@ -2281,7 +2281,7 @@ def render_future(analysis: StockAnalysis):
     mgmt_level = "good" if "excellent" in mgmt else "neutral" if "good" in mgmt else "warn"
 
     _render_status_pills([
-        {"label": "Moat Defensivo",
+        {"label": "Ventaja Defensiva",
          "value": _clean_tile_value(km.get("moat_strength"), max_len=14),
          "level": moat_level,
          "sub": _clean_tile_value(km.get("moat_type"), max_len=20),
@@ -2306,10 +2306,10 @@ def render_future(analysis: StockAnalysis):
 
     sub_items = []
     pillars = [
-        ("Calidad del Moat",     _safe_num(sub.get("moat_quality")),                 "#E2B25C"),
-        ("Runway de Crecimiento", _safe_num(sub.get("growth_runway")),               "#3DD68C"),
-        ("Resistencia Disrupción", _safe_num(sub.get("disruption_resilience")),      "#6FA3E0"),
-        ("Capital Allocation",   _safe_num(sub.get("management_capital_allocation")), "#9D8CE0"),
+        ("Ventaja Competitiva",   _safe_num(sub.get("moat_quality")),                 "#E2B25C"),
+        ("Espacio para Crecer",   _safe_num(sub.get("growth_runway")),                "#3DD68C"),
+        ("Resistencia Disrupción", _safe_num(sub.get("disruption_resilience")),       "#6FA3E0"),
+        ("Uso del Capital",       _safe_num(sub.get("management_capital_allocation")), "#9D8CE0"),
     ]
     # Guarda de escala: el modelo a veces devuelve 0-100 en vez de 0-25 (visto
     # en producción con fundamentales) → no multiplicar en ese caso.

@@ -664,7 +664,8 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
         width=0.55,
     ))
 
-    # Barras de score reales (encima)
+    # Barras de score reales (encima) — SIN número al final: la calificación
+    # vive en su propio panel a la derecha (más corta la barra, más limpia).
     fig.add_trace(go.Bar(
         y=names,
         x=scores,
@@ -674,11 +675,8 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
             line=dict(width=0),
             opacity=0.92,
         ),
-        text=[f"<b>{s:.0f}</b>" for s in scores],
-        textposition="outside",
-        textfont=dict(size=12, color=TEXT, family="JetBrains Mono"),
         showlegend=False,
-        hovertemplate="<b>%{y}</b><br>Score: %{x:.0f}/100<extra></extra>",
+        hoverinfo="skip",
         width=0.55,
     ))
 
@@ -688,6 +686,23 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
     fig.add_vline(x=80, line_dash="dot", line_color=GREEN,
                   line_width=1, opacity=0.35)
 
+    # ── Panel de CALIFICACIONES a la derecha (mismo diseño que los Pilares de
+    # Fundamentales/Futuro y que las otras versiones): un separador vertical
+    # limpio y el número grande en mono coloreado por el termómetro. ──────────
+    _n = len(names)
+    fig.add_shape(type="line", xref="paper", x0=0.86, x1=0.86,
+                  yref="y", y0=-0.5, y1=_n - 0.5,
+                  line=dict(color="rgba(255,255,255,0.12)", width=1))
+    for _i, _s in enumerate(scores):
+        fig.add_annotation(
+            xref="paper", x=0.995, xanchor="right",
+            yref="y", y=_i, yanchor="middle",
+            text=f"<b>{_s:.0f}</b><span style='font-size:0.55em;color:{MUTED}'>/100</span>",
+            showarrow=False,
+            font=dict(size=17, color=_score_color(_s), family="JetBrains Mono"),
+            align="right",
+        )
+
     fig.update_layout(
         paper_bgcolor=BG_MAIN,
         plot_bgcolor=BG_MAIN,
@@ -696,9 +711,13 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
         barmode="overlay",
         bargap=0.25,
         xaxis=dict(
-            range=[0, 108],
+            # Barras comprimidas a la izquierda; el tramo derecho del papel es
+            # el panel de calificaciones (domain en coords de paper, igual que
+            # el separador y los números).
+            domain=[0, 0.84],
+            range=[0, 102],
             gridcolor="rgba(0,0,0,0)",
-            tickfont=dict(color=MUTED, size=9),
+            tickfont=dict(color=MUTED, size=9, family="JetBrains Mono"),
             zeroline=False,
             tickvals=[0, 25, 50, 65, 80, 100],
             ticktext=["0", "25", "50", "<span style='color:#E2B25C'>65</span>", "<span style='color:#3DD68C'>80</span>", "100"],
@@ -715,10 +734,11 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
             y=0.97,
         ),
         showlegend=False,
-        margin=dict(l=10, r=50, t=40, b=20),
-        hovermode="y unified",
-        hoverlabel=dict(bgcolor="#15181D", bordercolor="rgba(226,178,92,0.3)",
-                        font=dict(size=11, family="JetBrains Mono", color=TEXT)),
+        margin=dict(l=10, r=16, t=40, b=20),
+        # Sin tooltip: el radar del Overview es la ÚNICA gráfica con pop-up al
+        # pasar el ratón (igual que en las otras versiones). Aquí las
+        # calificaciones ya se leen en el panel derecho.
+        hovermode=False,
     )
 
     return fig
@@ -1074,19 +1094,46 @@ def build_metric_bars(items: list, height: int = 220, title: str = "",
     )
     if color_by_score:
         # Barra algo más fina que el riel + etiqueta sin recortar contra el eje.
+        # El número NO va pegado al final de la barra: vive en el panel derecho
+        # (separador + columna de números, ver más abajo) — mismo lenguaje que
+        # la Rotación Sectorial y que las otras versiones de la app.
         bar_kwargs.update(width=0.62, showlegend=False, cliponaxis=False,
+                          text=None,
                           hovertemplate="<b>%{y}</b><br>%{x:.0f}<extra></extra>")
     fig.add_trace(go.Bar(**bar_kwargs))
 
     if x_zero_line and not color_by_score:
         fig.add_vline(x=0, line_color=MUTED, line_width=1, opacity=0.5)
 
+    if color_by_score:
+        # ── Panel de CALIFICACIONES a la derecha: un separador vertical limpio
+        # y el número grande en mono, coloreado por el MISMO termómetro que la
+        # barra (0-100, rojo→verde). Anotaciones ancladas al papel (misma x)
+        # para que la columna quede perfectamente alineada — con
+        # textposition="outside" cada número quedaría pegado a SU barra.
+        _n = len(labels)
+        fig.add_shape(type="line", xref="paper", x0=0.84, x1=0.84,
+                      yref="y", y0=-0.5, y1=_n - 0.5,
+                      line=dict(color="rgba(255,255,255,0.12)", width=1))
+        for _i, _v in enumerate(values):
+            fig.add_annotation(
+                xref="paper", x=0.995, xanchor="right",
+                yref="y", y=_i, yanchor="middle",
+                text=f"<b>{_v:.0f}</b><span style='font-size:0.55em;color:{MUTED}'>/100</span>",
+                showarrow=False,
+                font=dict(size=15, color=_score_color(_v), family="JetBrains Mono"),
+                align="right",
+            )
+
     xaxis = dict(gridcolor=GRID, tickfont=dict(color=MUTED, size=9), zerolinecolor=MUTED,
                  ticksuffix=("%" if x_format == "%" else ""))
     if color_by_score:
-        # Escala fija 0-108 para que el riel completo y las etiquetas quepan.
-        xaxis.update(range=[0, 108], gridcolor="rgba(0,0,0,0)", zeroline=False,
-                     tickvals=[0, 25, 50, 65, 80, 100])
+        # Barras comprimidas a la izquierda: el 18% derecho del papel es el
+        # panel de calificaciones. Riel completo 0→100 con ticks en los umbrales.
+        xaxis.update(domain=[0, 0.82], range=[0, 102],
+                     gridcolor="rgba(0,0,0,0)", zeroline=False,
+                     tickvals=[0, 25, 50, 65, 80, 100],
+                     tickfont=dict(color=MUTED, size=9, family="JetBrains Mono"))
 
     fig.update_layout(
         paper_bgcolor=BG_MAIN,
@@ -1096,7 +1143,9 @@ def build_metric_bars(items: list, height: int = 220, title: str = "",
         showlegend=False,
         # overlay: el riel y la barra comparten fila en vez de ponerse en paralelo.
         barmode="overlay",
-        margin=dict(l=10, r=60, t=40 if title else 10, b=10),
+        # En modo calificación el margen derecho se reduce: el panel de números
+        # vive DENTRO del papel. La rama normal (MAs / RS) queda como estaba.
+        margin=dict(l=10, r=(12 if color_by_score else 60), t=40 if title else 10, b=10),
         title=dict(text=f"<b>{title}</b>", font=dict(color=MUTED, size=11), x=0) if title else None,
         xaxis=xaxis,
         yaxis=dict(gridcolor="rgba(0,0,0,0)", tickfont=dict(color=TEXT, size=10), zerolinecolor=GRID),
