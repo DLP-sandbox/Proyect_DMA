@@ -2126,7 +2126,7 @@ def render_fundamentals(analysis: StockAnalysis):
         _render_metric_tiles(extra_tiles[:4])
 
     # ── Datos directos de Yahoo Finance ──────────────────────────
-    st.markdown('<div class="section-title-bar">Datos Yahoo Finance</div>',
+    st.markdown('<div class="section-title-bar">Datos de Mercado</div>',
                 unsafe_allow_html=True)
 
     # Market Cap
@@ -2168,13 +2168,13 @@ def render_fundamentals(analysis: StockAnalysis):
     _render_metric_tiles([
         {"icon": "💎", "label": "Market Cap",
          "value": mktcap_str, "color": "#E2B25C",
-         "tooltip": "Capitalización de mercado total (precio × acciones en circulación). Fuente: Yahoo Finance."},
+         "tooltip": "Capitalización de mercado total (precio × acciones en circulación)."},
         {"icon": "📊", "label": "Profit Margin",
          "value": pm_str, "color": pm_color,
-         "tooltip": "Margen neto (Profit Margin) directo de Yahoo Finance. % de cada dólar de ingresos que queda como ganancia neta."},
+         "tooltip": "Margen neto: % de cada dólar de ingresos que queda como ganancia neta."},
         {"icon": "💰", "label": "Revenue TTM",
          "value": rev_ttm_str, "color": "#6FA3E0",
-         "tooltip": "Ingresos totales de los últimos 12 meses (Trailing Twelve Months). Fuente: Yahoo Finance."},
+         "tooltip": "Ingresos totales de los últimos 12 meses."},
         {"icon": "📈", "label": "Beta",
          "value": beta_str, "color": beta_color,
          "tooltip": "Beta vs S&P 500. <1 = menos volátil que el índice, >1 = más volátil, 1 = correlación perfecta."},
@@ -3357,15 +3357,15 @@ def render_scan_results():
         # Mostrar SIEMPRE el diagnóstico para entender qué pasó
         if err:
             color = "#F1495F"
-            msg = f"Error de TradingView: {err}"
+            msg = f"Error del escáner: {err}"
         elif universe < 100:
             color = "#E2B25C"
-            msg = (f"TradingView devolvió solo <strong>{universe} acciones</strong> "
+            msg = (f"El escáner examinó solo <strong>{universe} acciones</strong> "
                    f"al universo crudo (esperábamos 1000+). De ellas, <strong>{passing}</strong> "
                    f"pasaron los filtros. Puede ser rate-limit transitorio — reintenta en 1-2 min.")
         else:
             color = "#6FA3E0"
-            msg = (f"✓ TradingView devolvió <strong>{universe} acciones</strong> al universo crudo. "
+            msg = (f"✓ El escáner examinó <strong>{universe} acciones</strong> del universo crudo. "
                    f"De ellas, <strong>{passing}</strong> pasaron los filtros del usuario.")
         st.markdown(
             f'<div style="background:#141920;border-left:3px solid {color};'
@@ -3382,7 +3382,7 @@ def render_scan_results():
                 "El scan se ejecutó pero **0 acciones pasaron los filtros**.\n\n"
                 "Causas posibles:\n"
                 "- Los filtros son demasiado estrictos (prueba con menos restricciones).\n"
-                "- Yahoo Finance está rate-limitando temporalmente. Espera 1-2 minutos y vuelve a intentar.\n\n"
+                "- La fuente de datos está limitando peticiones temporalmente. Espera 1-2 minutos y vuelve a intentar.\n\n"
                 "Puedes ajustar los filtros desde 'Escanear el Mercado' o lanzar un análisis individual de una acción específica."
             )
         else:
@@ -4021,6 +4021,36 @@ def render_quick_view(ticker: str):
 POPULAR_TICKERS = ["NVDA", "AAPL", "MSFT", "TSLA", "GOOGL", "META", "AMZN", "AMD", "AVGO", "NFLX", "COIN", "PLTR"]
 
 
+def _sparkline_svg(closes, positive, w=56, h=18):
+    """Mini-sparkline SVG puro (sin Plotly, ~300 bytes) con los cierres de los
+    últimos 5 días que get_live_snapshot ya descarga. Devuelve "" si no hay al
+    menos 2 puntos válidos — la tile simplemente no lo pinta. NUNCA lanza."""
+    try:
+        pts_in = [float(c) for c in (closes or [])
+                  if isinstance(c, (int, float)) and c == c]
+        if len(pts_in) < 2:
+            return ""
+        lo, hi = min(pts_in), max(pts_in)
+        span = (hi - lo) or 1.0           # serie plana → línea recta, sin div/0
+        pad = 1.5                         # aire para el stroke de 2px
+        step = w / (len(pts_in) - 1)
+        pts = " ".join(
+            f"{i * step:.1f},{h - pad - (c - lo) / span * (h - 2 * pad):.1f}"
+            for i, c in enumerate(pts_in)
+        )
+        color = "#3DD68C" if positive else "#F1495F"
+        return (
+            f'<svg class="tt-spark" width="{w}" height="{h}" '
+            f'viewBox="0 0 {w} {h}" preserveAspectRatio="none" aria-hidden="true">'
+            f'<polygon points="0,{h} {pts} {w},{h}" fill="{color}" fill-opacity="0.08"/>'
+            f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.6" '
+            f'stroke-linecap="round" stroke-linejoin="round" '
+            f'vector-effect="non-scaling-stroke"/></svg>'
+        )
+    except Exception:
+        return ""
+
+
 def render_welcome():
     # Hero
     st.markdown("""
@@ -4038,39 +4068,137 @@ def render_welcome():
     _, center_col, _ = st.columns([1, 50, 1])
 
     with center_col:
-        st.markdown('<div class="action-label-new">◇  ANALIZA UNA ACCIÓN O ESCANEA EL MERCADO COMPLETO</div>', unsafe_allow_html=True)
+        # El container keyed (st-key-herocard) es el ANCLA CSS de toda la
+        # card — antes el CSS colgaba del TEXTO del placeholder (frágil:
+        # cambiar el copy rompía la card entera). Ahora el copy es libre.
+        with st.container(key="herocard"):
+            # ── DOS RUTAS, DOS ZONAS ─────────────────────────────────────
+            # Antes las dos acciones competían en la misma franja visual y el
+            # escáner pasaba desapercibido. Ahora cada ruta tiene su mitad,
+            # su titular y su propio CTA, separadas por el clásico divisor
+            # "O" (patrón de dos caminos). Mucho más intuitivo de un vistazo.
+            zona_izq, zona_o, zona_der = st.columns([1.45, 0.12, 1], gap="small")
 
-        ticker_input = st.text_input(
-            label="Ticker",
-            label_visibility="collapsed",
-            placeholder="NVDA · AAPL · MSFT · TSLA  →  introduce un ticker y haz clic en Analizar",
-            key="hero_ticker_input",
-        ).upper().strip()
+            with zona_izq:
+                st.markdown(
+                    '<div class="hz-title">◈ &nbsp;ANALIZA UNA ACCIÓN</div>'
+                    '<div class="hz-sub">Busca una acción por su ticker en el '
+                    'mercado: &nbsp;TSLA · NVDA · AAPL</div>',
+                    unsafe_allow_html=True)
 
-        # Asimetría 1:1.3 — el botón derecho (Escanear el Mercado) tiene un
-        # 30% más de ancho porque su texto es más largo. Garantiza que quepa.
-        btn_col1, btn_col2 = st.columns([1, 1.3], gap="small")
-        with btn_col1:
-            analyze_btn = st.button("Análisis DLP", use_container_width=True, key="hero_analyze", type="primary")
-        with btn_col2:
-            scan_btn = st.button("Escanear el Mercado", use_container_width=True, key="hero_scan", type="primary")
+                # Ticker-tape estilo pantalla de trading floor: precios en
+                # vivo desfilando en LED ámbar. Usa SOLO el caché del snapshot
+                # (cero red, cero espera); sin datos aún → solo los símbolos.
+                try:
+                    from data.market_data import get_live_snapshot_cached
+                    _tape_snap = get_live_snapshot_cached(POPULAR_TICKERS)
+                except Exception:
+                    _tape_snap = {}
+                _items = []
+                for _tk in POPULAR_TICKERS:
+                    _d = _tape_snap.get(_tk, {})
+                    _p = _d.get("price")
+                    _c = _d.get("change_pct", 0) or 0
+                    if _p:
+                        _fl = "▲" if _c >= 0 else "▼"
+                        _items.append(
+                            f'<span class="hz-tape-item">{_tk} '
+                            f'{_p:,.2f} <span class="hz-tape-chg">{_fl}'
+                            f'{abs(_c):.2f}%</span></span>')
+                    else:
+                        _items.append(f'<span class="hz-tape-item">{_tk}</span>')
+                _tape_html = '<span class="hz-tape-sep">·</span>'.join(_items)
+                st.markdown(
+                    f'<div class="hz-tape" aria-hidden="true"><div class="hz-tape-track">'
+                    f'{_tape_html}<span class="hz-tape-sep">·</span>{_tape_html}'
+                    f'<span class="hz-tape-sep">·</span></div></div>',
+                    unsafe_allow_html=True)
+
+                # st.form → Enter en el input dispara el submit (Análisis DLP):
+                # el gesto universal "escribo el ticker y pulso Enter".
+                with st.form(key="hero_form", border=False, enter_to_submit=True):
+                    ticker_input = st.text_input(
+                        label="Ticker",
+                        label_visibility="collapsed",
+                        placeholder="TSLA · NVDA · AAPL…",
+                        key="hero_ticker_input",
+                    ).upper().strip()
+                    analyze_btn = st.form_submit_button(
+                        "🔍  Análisis DLP", use_container_width=True, type="primary")
+                st.markdown('<div class="cta-hint">escribe un ticker y pulsa '
+                            'Enter</div>', unsafe_allow_html=True)
+
+            with zona_o:
+                st.markdown(
+                    '<div class="hz-or"><span class="hz-or-line"></span>'
+                    '<span class="hz-or-badge">O</span>'
+                    '<span class="hz-or-line"></span></div>',
+                    unsafe_allow_html=True)
+
+            with zona_der:
+                st.markdown(
+                    '<div class="hz-title">◎ &nbsp;EXPLORA EL MERCADO</div>'
+                    '<div class="hz-sub">Escanea miles de acciones al mismo '
+                    'tiempo y encuentra oportunidades en el mercado</div>',
+                    unsafe_allow_html=True)
+                # Escáner rectangular CSS: barrido vertical que recorre el
+                # panel + blips verdes que aparecen un instante y se apagan,
+                # como hallazgos del escáner. Puro CSS, mismo ancho del botón.
+                st.markdown(
+                    '<div class="hz-scan-wrap" aria-hidden="true">'
+                    '<div class="hz-scan">'
+                    '<span class="hz-scan-grid"></span>'
+                    '<span class="hz-scan-beam"></span>'
+                    '<span class="hz-scan-blip b1"></span>'
+                    '<span class="hz-scan-blip b2"></span>'
+                    '<span class="hz-scan-blip b3"></span>'
+                    '<span class="hz-scan-blip b4"></span>'
+                    '<span class="hz-scan-blip b5"></span>'
+                    '</div></div>',
+                    unsafe_allow_html=True)
+                scan_btn = st.button(
+                    "◎  Escanear el Mercado", use_container_width=True,
+                    key="hero_scan", type="primary")
+                st.markdown('<div class="cta-hint">elige tus filtros antes '
+                            'de lanzarlo</div>', unsafe_allow_html=True)
 
         if analyze_btn and ticker_input:
-            # Validar el ticker ANTES de gastar créditos de Anthropic.
-            # validate_ticker() es gratis (~200ms via TradingView, sin Claude).
-            # Si el usuario escribió "NVDA " con espacio → lo limpia a "NVDA".
-            # Si escribió "NVD@" → muestra error claro, no lanza análisis.
-            # Si escribió "FAKE123" → muestra "no encontrado en NYSE/NASDAQ".
-            from data.market_data import validate_ticker
-            is_valid, clean_ticker, error_msg = validate_ticker(ticker_input)
-            if not is_valid:
-                st.error(error_msg)
+            # 1b. ¿Escribió el NOMBRE de la empresa en vez del ticker? (error
+            # típico de principiante). Se detecta ANTES de gastar red/créditos
+            # y se le enseña el ticker correcto.
+            _NOMBRE_A_TICKER = {
+                "APPLE": "AAPL", "TESLA": "TSLA", "NVIDIA": "NVDA",
+                "MICROSOFT": "MSFT", "GOOGLE": "GOOGL", "ALPHABET": "GOOGL",
+                "AMAZON": "AMZN", "FACEBOOK": "META", "NETFLIX": "NFLX",
+                "COCACOLA": "KO", "COCA": "KO", "DISNEY": "DIS", "INTEL": "INTC",
+                "PAYPAL": "PYPL", "ADOBE": "ADBE", "SALESFORCE": "CRM",
+                "ORACLE": "ORCL", "STARBUCKS": "SBUX", "MCDONALDS": "MCD",
+                "WALMART": "WMT", "BOEING": "BA", "PALANTIR": "PLTR",
+                "COINBASE": "COIN", "BROADCOM": "AVGO", "QUALCOMM": "QCOM",
+                "HONDA": "HMC", "TOYOTA": "TM", "SONY": "SONY", "FERRARI": "RACE",
+                "VISA": "V", "MASTERCARD": "MA", "PEPSI": "PEP", "PEPSICO": "PEP",
+                "NIKE": "NKE", "AIRBNB": "ABNB", "UBER": "UBER", "SPOTIFY": "SPOT",
+            }
+            _sugerido = _NOMBRE_A_TICKER.get(
+                ticker_input.replace("-", "").replace("_", ""))
+            if _sugerido and _sugerido != ticker_input:
+                st.error(
+                    f"❌ Para buscar una acción utiliza su **ticker** (el código de "
+                    f"cotización), no el nombre de la empresa.\n\n"
+                    f"Por ejemplo: no es **{ticker_input.title()}**, es **{_sugerido}**. "
+                    f"Escribe **{_sugerido}** en el buscador y pulsa Enter.\n\n"
+                    "_El análisis no se ejecutó — no se gastaron créditos._"
+                )
             else:
-                # El cooldown ya NO se comprueba aquí: vive dentro de
-                # `run_analysis`, que es por donde pasan todos los caminos (este
-                # buscador, la barra lateral y el botón del Quick View). Antes
-                # estaba solo aquí, así que el Quick View se lo saltaba.
-                run_analysis(clean_ticker)
+                # Validar el ticker ANTES de gastar créditos (gratis, sin Claude).
+                from data.market_data import validate_ticker
+                is_valid, clean_ticker, error_msg = validate_ticker(ticker_input)
+                if not is_valid:
+                    st.error(error_msg)
+                else:
+                    # El cooldown vive dentro de run_analysis (freno único para
+                    # buscador, sidebar y Quick View).
+                    run_analysis(clean_ticker)
         if scan_btn:
             # Abre la página de configuración del scanner (no corre scan directo)
             st.session_state.scanner_config_open = True
@@ -4079,14 +4207,16 @@ def render_welcome():
     # ── Quick Access Tickers ──────────────────────────────────────────
     st.markdown('<div class="section-header">⊕  Acceso Rápido — Tickers Populares</div>', unsafe_allow_html=True)
 
-    # Spinner visible mientras cargan los precios en vivo (~1-3s)
+    # Skeleton del grid mientras cargan los precios (~1-3s) — la página ya
+    # muestra la ESTRUCTURA final (10 placeholders shimmer) en vez de una
+    # cinta que no dice nada. Sin salto de layout al hidratarse.
     tickers_loader = st.empty()
-    tickers_loader.markdown("""
-    <div class="section-spinner-wrap">
-        <div class="section-spinner"></div>
-        <div class="section-spinner-text">Cargando precios en vivo…</div>
-    </div>
-    """, unsafe_allow_html=True)
+    tickers_loader.markdown(
+        '<div class="qt-skel-grid">'
+        + '<div class="qt-skel skeleton-block"></div>' * 10
+        + '</div>',
+        unsafe_allow_html=True,
+    )
 
     from data.market_data import get_live_snapshot
     snapshot = {}
@@ -4095,13 +4225,14 @@ def render_welcome():
     except Exception:
         pass
 
-    # Quitar el spinner — vamos a renderizar las cards reales abajo
+    # Quitar el skeleton — vamos a renderizar las cards reales abajo
     tickers_loader.empty()
 
-    # Grid 6 cols x 2 rows — layout multi-línea + botón invisible overlay
-    rows = [POPULAR_TICKERS[:6], POPULAR_TICKERS[6:12]]
+    # Grid 5 cols x 2 rows — tarjetas amplias, 100% clicables, con sparkline
+    # intradía (5 días, textura real de mercado) y footer ▾ que invita al clic.
+    rows = [POPULAR_TICKERS[:5], POPULAR_TICKERS[5:10]]
     for row_idx, row in enumerate(rows):
-        cols = st.columns(6, gap="small")
+        cols = st.columns(5, gap="small")
         for i, ticker in enumerate(row):
             with cols[i]:
                 data = snapshot.get(ticker, {})
@@ -4110,32 +4241,37 @@ def render_welcome():
 
                 change_color = "#3DD68C" if change >= 0 else "#F1495F"
                 arrow = "▲" if change >= 0 else "▼"
-                price_str = f"${price:.2f}" if price else "—"
+                price_str = f"${price:,.2f}" if price else "—"
                 change_str = f"{arrow} {abs(change):.2f}%" if price else "—"
-                anim_delay = (row_idx * 6 + i) * 0.06
 
-                # Card visual con layout multi-línea (TICKER / $price / ▲ X%)
-                st.markdown(f"""
-                <div class="ticker-tile" style="animation-delay:{anim_delay}s;">
-                    <div class="tt-symbol">{ticker}</div>
-                    <div class="tt-price">{price_str}</div>
-                    <div class="tt-change" style="color:{change_color};">{change_str}</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                # Botón pequeño con flecha ▾ debajo de la card — abre Quick View
-                if st.button("▾", key=f"quick_{ticker}", use_container_width=True,
-                             help=f"Ver dashboard rápido de {ticker}"):
-                    if ticker in st.session_state.analyses:
-                        st.session_state.selected_ticker = ticker
-                        st.session_state.quick_view_ticker = None
-                    else:
+                tk_safe = "".join(c if (c.isalnum() or c in "_-") else "_"
+                                  for c in ticker)
+                with st.container(key=f"qtile_{tk_safe}"):
+                    st.markdown(
+                        f'<div class="qt-head"><span class="tt-symbol">{ticker}</span>'
+                        f'<span class="tt-change" style="color:{change_color};">{change_str}</span></div>'
+                        f'<div class="qt-price">{price_str}</div>'
+                        f'{_sparkline_svg(data.get("closes"), change >= 0, w=120, h=30)}'
+                        f'<div class="qt-foot">▾&nbsp;&nbsp;<span class="qt-foot-txt">VER TODO</span></div>',
+                        unsafe_allow_html=True,
+                    )
+                    # Overlay invisible: TODA la tarjeta es clicable.
+                    # «VER TODO» abre SIEMPRE el dashboard rápido INFORMATIVO
+                    # (quick view) — nunca lanza ni abre un análisis: para eso
+                    # están el buscador y el historial del sidebar.
+                    # SIN help=: el tooltip envuelve el botón en wrappers
+                    # (stTooltipHoverTarget) que NO se estiran → el botón solo
+                    # cubría una franja de ~38px arriba y el clic real del
+                    # ratón en el resto de la tarjeta (p. ej. «VER TODO») caía
+                    # al vacío. Sin tooltip la cadena es directa y el overlay
+                    # cubre la tarjeta ENTERA.
+                    if st.button(f"◈ {ticker}", key=f"qtilebtn_{tk_safe}"):
                         st.session_state.quick_view_ticker = ticker
                         st.session_state.selected_ticker = None
                         # Desde el home SÍ se permite lanzar análisis desde el
                         # Quick View → marcamos que NO viene del scan.
                         st.session_state.quick_view_from_scan = False
-                    st.rerun()
+                        st.rerun()
 
     # ── Bloque macro (pulso + rotación sectorial) ─────────────────────
     # ANTES: una cinta de carga y `get_macro_data()` bloqueando la página 4,4 s
@@ -4220,7 +4356,7 @@ def _render_bloque_macro():
     _punto = ('<span style="color:#5E6570;font-size:0.6rem;font-family:JetBrains Mono;'
               'letter-spacing:0.08em;margin-left:10px;">actualizando…</span>'
               if actualizando else "")
-    st.markdown(f'<div class="section-header">Live Market Pulse{_punto}</div>',
+    st.markdown(f'<div class="section-header">El Mercado en Vivo{_punto}</div>',
                 unsafe_allow_html=True)
 
     # (label, key del macro, formato del valor)
@@ -4328,7 +4464,10 @@ def main():
     qv = st.session_state.get("quick_view_ticker")
 
     # Prioridad: Quick View > Full Analysis > Scanner Config > Scan Results > Welcome
-    if qv and qv not in st.session_state.analyses:
+    # El quick view se muestra SIEMPRE que esté pedido — también para tickers
+    # ya analizados («VER TODO» es la vista informativa; el análisis completo
+    # se abre desde el buscador, el sidebar o el CTA del propio quick view).
+    if qv:
         render_quick_view(qv)
         return
 

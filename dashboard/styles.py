@@ -108,8 +108,21 @@ BLOOMBERG_CSS = """
 }
 
 /* ── Base ────────────────────────────────────────────────────────────── */
-html, body, [data-testid="stAppViewContainer"] {
+html, body {
     background: var(--bg) !important;
+}
+/* Lienzo raíz: fondo + cuadrícula de puntos (textura de terminal). Al ser el
+   background del propio lienzo, vive en la capa MÁS BAJA: tarjetas, gráficas,
+   menús y cualquier elemento con fondo la tapan por naturaleza — los puntos
+   solo se ven donde de verdad hay fondo vacío. */
+[data-testid="stAppViewContainer"] {
+    background-color: var(--bg) !important;
+    background-image: radial-gradient(circle,
+        rgba(255, 255, 255, 0.10) 1.2px, transparent 1.35px) !important;
+    background-size: 17px 17px !important;
+    background-attachment: fixed !important;
+}
+html, body, [data-testid="stAppViewContainer"] {
     color: var(--text) !important;
     font-family: var(--font-ui) !important;
     -webkit-font-smoothing: antialiased;
@@ -183,7 +196,7 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
 
 .alpha-hero-brand {
     font-family: var(--font-mono);
-    font-size: 3.4rem;
+    font-size: clamp(2rem, 7vw, 3.4rem);
     font-weight: 700;
     background: linear-gradient(160deg, var(--accent-hi) 0%, var(--accent) 55%, var(--accent-deep) 100%);
     -webkit-background-clip: text;
@@ -222,7 +235,7 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
 
 /* ── ACTION CARD: la columna CENTRAL del welcome se convierte en card ── */
 /* Detectamos la columna por el placeholder único del input hero */
-[data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"]) {
+.stMain .st-key-herocard {
     background: linear-gradient(135deg, rgba(13,15,18,0.95), rgba(20,28,38,0.95)) !important;
     border: 1px solid rgba(var(--accent-rgb),0.22) !important;
     border-radius: 16px !important;
@@ -238,7 +251,7 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
    Técnica nativa CSS Motion Path (offset-path): un pequeño trazo dorado
    se desplaza con velocidad uniforme siguiendo el contorno redondeado.
    border-radius de la card = 16px → mismo valor en inset() round. */
-[data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"])::before {
+.stMain .st-key-herocard::before {
     content: '';
     position: absolute;
     top: 0;
@@ -277,7 +290,7 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
 }
 
 /* Input dentro de la action card */
-[data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"]) [data-testid="stTextInput"] input {
+.stMain .st-key-herocard [data-testid="stTextInput"] input {
     background: rgba(10,13,17,0.8) !important;
     border: 1px solid rgba(var(--accent-rgb),0.3) !important;
     color: var(--text-hi) !important;
@@ -291,14 +304,14 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
     transition: background var(--dur-2) var(--ease-out), border-color var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out), opacity var(--dur-2) var(--ease-out) !important;
 }
 
-[data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"]) [data-testid="stTextInput"] input:focus {
+.stMain .st-key-herocard [data-testid="stTextInput"] input:focus {
     border-color: var(--accent) !important;
     background: rgba(13,15,18,1) !important;
     box-shadow: 0 0 0 3px rgba(var(--accent-rgb),0.12) !important;
     outline: none !important;
 }
 
-[data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"]) [data-testid="stTextInput"] input::placeholder {
+.stMain .st-key-herocard [data-testid="stTextInput"] input::placeholder {
     color: var(--text-3) !important;
     font-weight: 400 !important;
     text-transform: none !important;
@@ -308,7 +321,8 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
 /* Botón primario (Análisis y Escanear) dorado — padding compacto SIEMPRE
    (no en media query) para que "ESCANEAR EL MERCADO" quepa en iframe
    cuadrado de Whop sin importar viewport. */
-[data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"]) [data-testid="stButton"] > button[kind="primary"] {
+.stMain .st-key-herocard [data-testid="stButton"] > button[kind^="primary"],
+.stMain .st-key-herocard [data-testid="stFormSubmitButton"] > button[kind^="primary"] {
     background: linear-gradient(135deg, var(--accent) 0%, var(--accent-deep) 100%) !important;
     border: none !important;
     color: var(--bg) !important;
@@ -326,7 +340,8 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
     box-shadow: 0 4px 20px rgba(var(--accent-rgb),0.3), inset 0 1px 0 rgba(255,255,255,0.2) !important;
 }
 
-[data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"]) [data-testid="stButton"] > button[kind="primary"]:hover {
+.stMain .st-key-herocard [data-testid="stButton"] > button[kind^="primary"]:hover,
+.stMain .st-key-herocard [data-testid="stFormSubmitButton"] > button[kind^="primary"]:hover {
     transform: translateY(-2px) !important;
     box-shadow: 0 8px 30px rgba(var(--accent-rgb),0.5), inset 0 1px 0 rgba(255,255,255,0.3) !important;
     background: linear-gradient(135deg, var(--accent-hi) 0%, var(--accent) 100%) !important;
@@ -334,7 +349,8 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
 }
 
 /* Botón secundario (Scan) azul */
-[data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"]) [data-testid="stButton"] > button[kind="secondary"] {
+.stMain .st-key-herocard [data-testid="stButton"] > button[kind^="secondary"],
+.stMain .st-key-herocard [data-testid="stFormSubmitButton"] > button[kind^="secondary"] {
     background: linear-gradient(135deg, rgba(var(--info-rgb),0.15) 0%, rgba(var(--info-rgb),0.05) 100%) !important;
     border: 1px solid rgba(var(--info-rgb),0.4) !important;
     color: var(--info) !important;
@@ -352,7 +368,8 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
     transition: background var(--dur-2) var(--ease-out), border-color var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out), opacity var(--dur-2) var(--ease-out) !important;
 }
 
-[data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"]) [data-testid="stButton"] > button[kind="secondary"]:hover {
+.stMain .st-key-herocard [data-testid="stButton"] > button[kind^="secondary"]:hover,
+.stMain .st-key-herocard [data-testid="stFormSubmitButton"] > button[kind^="secondary"]:hover {
     background: linear-gradient(135deg, rgba(var(--info-rgb),0.25) 0%, rgba(var(--info-rgb),0.1) 100%) !important;
     border-color: var(--info) !important;
     box-shadow: 0 8px 30px rgba(var(--info-rgb),0.3) !important;
@@ -371,41 +388,24 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
     margin: 30px 0 16px 0;
     position: relative;
     animation: fadeIn 1s ease-out 0.4s both;
+    /* Líneas laterales FLEX (no absolutas a ±180px): en iframes angostos se
+       encogen en lugar de montarse sobre el texto. */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
 }
 
 .section-header::before, .section-header::after {
     content: '';
-    position: absolute;
-    top: 50%;
-    width: 60px;
+    flex: 0 1 60px;
     height: 1px;
     background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb),0.3));
 }
 
-.section-header::before { left: calc(50% - 180px); transform: scaleX(-1); }
-.section-header::after  { right: calc(50% - 180px); }
+.section-header::before { transform: scaleX(-1); }
 
-/* ── Ticker tiles: card visual arriba + botón ▾ pegado abajo ──────── */
-.ticker-tile {
-    background: var(--surface-1);
-    border: 1px solid var(--hairline);
-    border-bottom: none;
-    border-radius: var(--r-sm) var(--r-sm) 0 0;
-    padding: 14px 10px 12px 10px;
-    text-align: center;
-    height: 95px;
-    transition: background var(--dur-2) var(--ease-out),
-                border-color var(--dur-2) var(--ease-out);
-    animation: fadeInUp var(--dur-3) var(--ease-out) both;
-    position: relative;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 4px;
-    box-shadow: var(--inset-hi);
-}
-
+/* ── Tipografía de las ticker tiles (la tarjeta vive en st-key-qtile_) ── */
 .tt-symbol {
     font-family: var(--font-mono);
     font-size: 1.02rem;
@@ -431,46 +431,6 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
     line-height: 1.15;
     letter-spacing: 0;
     font-variant-numeric: tabular-nums;
-}
-
-/* Botón ▾ pequeño debajo de la card — pegado visualmente */
-[data-testid="stColumn"]:has(.ticker-tile) [data-testid="stButton"] {
-    margin-top: -6px !important;
-}
-
-[data-testid="stColumn"]:has(.ticker-tile) [data-testid="stButton"] > button {
-    background: var(--surface-1) !important;
-    border: 1px solid var(--hairline) !important;
-    border-top: 1px solid var(--hairline) !important;
-    border-radius: 0 0 var(--r-sm) var(--r-sm) !important;
-    color: var(--text-3) !important;
-    font-family: var(--font-mono) !important;
-    font-size: 0.95rem !important;
-    font-weight: 600 !important;
-    padding: 3px 0 5px 0 !important;
-    height: 26px !important;
-    width: 100% !important;
-    line-height: 1 !important;
-    letter-spacing: 0 !important;
-    text-transform: none !important;
-    transition: background var(--dur-2) var(--ease-out),
-                color var(--dur-2) var(--ease-out),
-                border-color var(--dur-2) var(--ease-out) !important;
-    box-shadow: none !important;
-}
-
-[data-testid="stColumn"]:has(.ticker-tile) [data-testid="stButton"] > button:hover {
-    background: var(--surface-2) !important;
-    border-color: var(--hairline-2) !important;
-    color: var(--accent) !important;
-    transform: none !important;
-    box-shadow: none !important;
-}
-
-/* Cuando el botón ▾ es hovereado, también resaltar la card pegada arriba */
-[data-testid="stColumn"]:has([data-testid="stButton"]:hover) .ticker-tile {
-    border-color: var(--hairline-2);
-    background: var(--surface-2);
 }
 
 /* ── Live Market Pulse Card ──────────────────────────────────────────── */
@@ -2945,15 +2905,6 @@ hr {
 .action-label-new   { animation: anim-fadeInUp 600ms 200ms var(--ease-out) both; }
 
 /* Quick-access ticker tiles con stagger por delay calculado en JSX (animation-delay) */
-.ticker-tile {
-    animation: anim-fadeInUp 520ms var(--ease-out) both;
-    transition: transform var(--anim-normal) var(--ease-out),
-                box-shadow var(--anim-normal) var(--ease-out),
-                border-color var(--anim-normal) var(--ease-out);
-}
-.ticker-tile:hover {
-    transform: translate3d(0, -3px, 0);
-}
 
 /* ── 2. BOTONES GLOBALES — feedback al press y al hover ─────────────── */
 [data-testid="stButton"] > button {
@@ -3123,11 +3074,6 @@ hr {
     animation: anim-fadeInUp 520ms 200ms var(--ease-out) both;
 }
 
-/* ── 14. TICKER TILES stagger por fila ────────────────────────────── */
-[data-testid="stColumn"]:has(.ticker-tile) .ticker-tile {
-    animation: anim-fadeInUp 480ms var(--ease-out) both;
-}
-
 /* ── 15. BRILLO DE BORDE — botón "Ejecutar búsqueda" (ÚNICO) ──────
    Selector ESTRICTO: el botón es el element-container que sigue
    INMEDIATAMENTE al element-container que contiene el anchor.
@@ -3202,8 +3148,10 @@ hr {
 .alpha-hero,
 .alpha-hero *,
 .action-label-new,
-.ticker-tile,
-.ticker-tile *,
+div[class*="st-key-qtile_"],
+div[class*="st-key-qtile_"] *,
+.cta-hint, .hz-title, .hz-sub, .hz-or, .hz-or *, .qt-foot, .qt-foot *,
+.hz-tape, .hz-tape *, .hz-scan, .hz-scan *,
 .kpi-tile-label,
 .scanner-pri-anchor,
 .ejecutar-glow-anchor {
@@ -3404,9 +3352,9 @@ section[data-testid="stSidebar"] {
     /* Botones de la action card del home — padding más compacto y font un
        poquito más chico para que "🌐 ESCANEAR EL MERCADO" quepa completo en
        el iframe cuadrado de Whop sin cortarse. */
-    [data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"])
+    .stMain .st-key-herocard
         [data-testid="stButton"] > button[kind="primary"],
-    [data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"])
+    .stMain .st-key-herocard
         [data-testid="stButton"] > button[kind="secondary"] {
         padding: 10px 8px !important;
         font-size: 0.72rem !important;
@@ -3420,9 +3368,9 @@ section[data-testid="stSidebar"] {
 /* Iframe ANGOSTO (Whop con sidebar): forzar que TODO el texto del botón
    quepa, incluso a costa de tamaño aún más chico. */
 @media (max-width: 700px) {
-    [data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"])
+    .stMain .st-key-herocard
         [data-testid="stButton"] > button[kind="primary"],
-    [data-testid="stColumn"]:has(input[placeholder*="introduce un ticker"])
+    .stMain .st-key-herocard
         [data-testid="stButton"] > button[kind="secondary"] {
         padding: 10px 6px !important;
         font-size: 0.66rem !important;
@@ -3970,7 +3918,7 @@ section[data-testid="stSidebar"] {
 
 /* Hover solo donde hay puntero real (evita falsos hover en táctil) */
 @media (hover: none) {
-    .kpi-tile:hover, .status-pill:hover, .ticker-tile:hover { transform: none; }
+    .kpi-tile:hover, .status-pill:hover { transform: none; }
 }
 
 /* Movimiento reducido: se conservan fundidos, se eliminan desplazamientos */
@@ -4264,6 +4212,442 @@ div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p::be
         rgba(255,255,255,0)    100%);
     box-shadow: 0 0 6px rgba(255,255,255,0.10);
     pointer-events: none;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────
+   INICIO v2 — action card con form, microcopy, recientes, tiles qtile_
+   ───────────────────────────────────────────────────────────────────── */
+
+/* El st.form dentro de la herocard es un contenedor PASANTE: sin borde,
+   sin padding, sin fondo (border=False ya lo pide; esto es el cinturón). */
+.stMain .st-key-herocard [data-testid="stForm"] {
+    border: none !important;
+    padding: 0 !important;
+    background: transparent !important;
+}
+
+/* Microcopy bajo cada CTA: orienta sin gritar (mono, minúsculo, gris) */
+.cta-hint {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    font-weight: 500;
+    color: var(--text-3);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-align: center;
+    margin-top: 6px;
+    animation: anim-fadeIn 600ms var(--ease-out) 300ms both;
+}
+
+/* ── DOS RUTAS: zonas de la action card (Analiza | O | Explora) ─────── */
+.hz-title {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    margin-bottom: 7px;
+    white-space: nowrap;
+    text-align: center;
+}
+.hz-sub {
+    font-family: var(--font-ui);
+    font-size: 0.76rem;
+    color: var(--text-2);
+    line-height: 1.55;
+    margin-bottom: 12px;
+    text-align: center;
+    min-height: 2.4em;      /* iguala la altura de los dos subtítulos */
+}
+/* Divisor "O" vertical entre las dos rutas — atraviesa la tarjeta
+   ENTERA: la cadena de contenedores estira al 100% y los márgenes
+   negativos comen el padding vertical de la card (28px). */
+.hz-or {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    height: calc(100% + 56px);
+    margin: -28px 0;
+    min-height: 150px;
+}
+.stMain .st-key-herocard [data-testid="stColumn"]:has(.hz-or) > [data-testid="stLayoutWrapper"],
+.stMain .st-key-herocard [data-testid="stColumn"]:has(.hz-or) > [data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"],
+.stMain .st-key-herocard [data-testid="stColumn"]:has(.hz-or) [data-testid="stElementContainer"]:has(.hz-or),
+.stMain .st-key-herocard [data-testid="stColumn"]:has(.hz-or) [data-testid="stElementContainer"]:has(.hz-or) [data-testid="stMarkdown"],
+.stMain .st-key-herocard [data-testid="stColumn"]:has(.hz-or) [data-testid="stElementContainer"]:has(.hz-or) [data-testid="stMarkdownContainer"] {
+    height: 100% !important;
+}
+.hz-or-line {
+    flex: 1 1 auto;
+    width: 1px;
+    min-height: 34px;
+    background: linear-gradient(180deg, transparent,
+        rgba(var(--accent-rgb), 0.35), transparent);
+}
+.hz-or-badge {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--text-2);
+    border: 1px solid var(--hairline-2);
+    border-radius: 50%;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface-2);
+    flex: 0 0 auto;
+}
+
+/* ── Escáner rectangular: barrido + blips verdes (CSS puro) ─────────── */
+.hz-scan-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 0 10px 0;
+    width: 100%;
+}
+.hz-scan {
+    position: relative;
+    width: 100%;                 /* mismo ancho que el botón de abajo */
+    height: 52px;
+    border: 1px solid rgba(var(--accent-rgb), 0.22);
+    border-radius: var(--r-md);
+    background: var(--surface-0);
+    overflow: hidden;            /* el barrido no se sale de las esquinas */
+    box-shadow: var(--inset-hi);
+}
+/* Rejilla tenue de fondo (look instrumento) */
+.hz-scan-grid {
+    position: absolute;
+    inset: 0;
+    background:
+        repeating-linear-gradient(90deg, rgba(255,255,255,0.03) 0 1px, transparent 1px 18px),
+        repeating-linear-gradient(0deg,  rgba(255,255,255,0.025) 0 1px, transparent 1px 13px);
+}
+/* Barrido ROTATORIO: cono dorado girando alrededor del eje central del
+   panel (como el radar clásico, pero dentro de la forma rectangular — el
+   overflow:hidden del rect recorta el cono en las esquinas). */
+.hz-scan-beam {
+    position: absolute;
+    top: 50%; left: 50%;
+    /* El cono debe cubrir hasta las esquinas: lado ≥ diagonal del rect */
+    width: 120%;
+    aspect-ratio: 1 / 1;
+    transform: translate(-50%, -50%);
+    background: conic-gradient(from 0deg,
+        rgba(var(--accent-rgb), 0.32) 0deg,
+        rgba(var(--accent-rgb), 0.10) 42deg,
+        transparent 66deg);
+    border-radius: 50%;
+    animation: hz-scan-spin 3.8s linear infinite;
+}
+@keyframes hz-scan-spin {
+    from { transform: translate(-50%, -50%) rotate(0deg); }
+    to   { transform: translate(-50%, -50%) rotate(360deg); }
+}
+/* Eje central: puntito dorado fijo del que nace el barrido */
+.hz-scan::after {
+    content: '';
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 4px; height: 4px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: rgba(var(--accent-rgb), 0.75);
+    box-shadow: 0 0 6px rgba(var(--accent-rgb), 0.5);
+}
+/* Blips: hallazgos verdes que aparecen un segundo y se apagan */
+.hz-scan-blip {
+    position: absolute;
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--pos);
+    box-shadow: 0 0 6px rgba(var(--pos-rgb), 0.65);
+    opacity: 0;
+    animation: hz-scan-blip 6.8s ease-out infinite;
+}
+.hz-scan-blip.b1 { top: 26%; left: 18%; animation-delay: 0.6s; }
+.hz-scan-blip.b2 { top: 64%; left: 41%; animation-delay: 1.7s; }
+.hz-scan-blip.b3 { top: 34%; left: 71%; animation-delay: 2.9s; }
+.hz-scan-blip.b4 { top: 70%; left: 86%; animation-delay: 4.3s; }
+.hz-scan-blip.b5 { top: 22%; left: 55%; animation-delay: 5.4s; }
+@keyframes hz-scan-blip {
+    0%, 4%     { opacity: 0; transform: scale(0.6); }
+    7%         { opacity: 1; transform: scale(1); }
+    16%        { opacity: 0.75; }
+    22%, 100%  { opacity: 0; transform: scale(0.85); }
+}
+
+/* ── Ticker-tape: pantalla LED ámbar de trading floor ───────────────── */
+.hz-tape {
+    position: relative;
+    width: 100%;
+    height: 52px;                /* mismo alto que el escáner de la derecha */
+    border: 1px solid rgba(var(--accent-rgb), 0.22);
+    border-radius: var(--r-md);
+    background: var(--surface-0);
+    overflow: hidden;
+    box-shadow: var(--inset-hi);
+    display: flex;
+    align-items: center;
+    margin-bottom: 12px;
+    /* Scanlines horizontales: look de pantalla LED */
+    background-image: repeating-linear-gradient(0deg,
+        rgba(255,255,255,0.028) 0 1px, transparent 1px 3px);
+    /* Desvanecido en los bordes laterales (el texto entra y sale suave) */
+    -webkit-mask-image: linear-gradient(90deg, transparent 0,
+        black 24px, black calc(100% - 24px), transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0,
+        black 24px, black calc(100% - 24px), transparent 100%);
+}
+.hz-tape-track {
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+    will-change: transform;
+    animation: hz-tape-scroll 36s linear infinite;
+}
+@keyframes hz-tape-scroll {
+    from { transform: translateX(0); }
+    to   { transform: translateX(-50%); }
+}
+.hz-tape-item {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--accent) !important;
+    text-shadow: 0 0 7px rgba(var(--accent-rgb), 0.45);
+    padding: 0 6px;
+    font-variant-numeric: tabular-nums;
+}
+.hz-tape-chg {
+    font-size: 0.66rem;
+    font-weight: 600;
+    color: rgba(var(--accent-hi-rgb), 0.85) !important;
+}
+.hz-tape-sep {
+    color: rgba(var(--accent-rgb), 0.35) !important;
+    font-size: 0.7rem;
+    padding: 0 2px;
+}
+/* En pantallas táctiles/reduce-motion el global ya congela las animaciones */
+
+/* Alineación de los dos CTA a la MISMA altura (misma línea base):
+   la columna derecha (radar) es la más ALTA y define la altura de la fila;
+   la izquierda se estira y ancla su buscador+botón ABAJO (margin-bottom:auto
+   en el título empuja el resto al fondo). Resultado: ambos botones y ambos
+   hints comparten exactamente la misma Y. */
+.stMain .st-key-herocard [data-testid="stColumn"]:has(.hz-scan) > [data-testid="stLayoutWrapper"],
+.stMain .st-key-herocard [data-testid="stColumn"]:has([data-testid="stForm"]) > [data-testid="stLayoutWrapper"] {
+    height: 100%;
+}
+.stMain .st-key-herocard [data-testid="stColumn"]:has(.hz-scan) > [data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"],
+.stMain .st-key-herocard [data-testid="stColumn"]:has([data-testid="stForm"]) > [data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"] {
+    height: 100%;
+}
+/* Derecha: el radar absorbe el espacio flexible entre subtítulo y botón */
+.stMain .st-key-herocard [data-testid="stColumn"]:has(.hz-scan) [data-testid="stElementContainer"]:has(.hz-scan-wrap) {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+/* El flex de arriba encogía el markdown a su contenido (el rect colapsaba a
+   2px): toda la cadena interior debe ocupar el 100% del ancho. */
+.stMain .st-key-herocard [data-testid="stColumn"]:has(.hz-scan) [data-testid="stElementContainer"]:has(.hz-scan-wrap) [data-testid="stMarkdown"],
+.stMain .st-key-herocard [data-testid="stColumn"]:has(.hz-scan) [data-testid="stElementContainer"]:has(.hz-scan-wrap) [data-testid="stMarkdownContainer"] {
+    width: 100%;
+}
+
+
+/* ── Skeleton del grid de tickers (sustituye al spinner bloqueante) ── */
+.qt-skel-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    margin: 4px 0 10px 0;
+}
+.qt-skel {
+    height: 118px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--hairline);
+}
+@media (max-width: 640px) {
+    .qt-skel-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* ── Tiles v2 (qtile_): tarjeta 100% clicable con sparkline ─────────── */
+.stMain div[class*="st-key-qtile_"] {
+    position: relative;
+    background: var(--surface-1);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-sm);
+    padding: 13px 12px 10px 12px;
+    box-shadow: var(--inset-hi);
+    transition: background var(--dur-2) var(--ease-out),
+                border-color var(--dur-2) var(--ease-out),
+                transform var(--dur-2) var(--ease-out);
+    animation: anim-fadeInUp 480ms var(--ease-out) both;
+}
+@media (hover: hover) and (pointer: fine) {
+    .stMain div[class*="st-key-qtile_"]:hover {
+        background: var(--surface-2);
+        border-color: var(--hairline-2);
+        transform: translateY(-1px);
+    }
+}
+.stMain div[class*="st-key-qtile_"]:active { transform: scale(0.99); }
+.stMain div[class*="st-key-qtile_"]:has(button:focus-visible) {
+    outline: 2px solid rgba(var(--accent-rgb), 0.55);
+    outline-offset: 2px;
+}
+.stMain div[class*="st-key-qtile_"] [data-testid="stMarkdownContainer"] { margin-bottom: 0 !important; }
+
+/* Stagger de entrada (el delay inline ya no puede ir en el keyed) */
+.stMain [data-testid="stHorizontalBlock"]:has(div[class*="st-key-qtile_"]) [data-testid="stColumn"]:nth-child(2) div[class*="st-key-qtile_"] { animation-delay: 50ms; }
+.stMain [data-testid="stHorizontalBlock"]:has(div[class*="st-key-qtile_"]) [data-testid="stColumn"]:nth-child(3) div[class*="st-key-qtile_"] { animation-delay: 100ms; }
+.stMain [data-testid="stHorizontalBlock"]:has(div[class*="st-key-qtile_"]) [data-testid="stColumn"]:nth-child(4) div[class*="st-key-qtile_"] { animation-delay: 150ms; }
+.stMain [data-testid="stHorizontalBlock"]:has(div[class*="st-key-qtile_"]) [data-testid="stColumn"]:nth-child(5) div[class*="st-key-qtile_"] { animation-delay: 200ms; }
+.stMain [data-testid="stHorizontalBlock"]:has(div[class*="st-key-qtile_"]) [data-testid="stColumn"]:nth-child(6) div[class*="st-key-qtile_"] { animation-delay: 250ms; }
+
+.qt-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px;
+}
+.qt-price {
+    font-family: var(--font-mono);
+    font-size: 1.06rem;
+    font-weight: 700;
+    color: var(--text-hi) !important;
+    font-variant-numeric: tabular-nums;
+    text-align: left;
+    margin: 2px 0 6px 0;
+    line-height: 1.2;
+}
+.tt-spark {
+    display: block;
+    width: 100%;
+    height: auto;
+    opacity: 0.95;
+    border-radius: 2px;
+}
+/* Footer ▾: BOTÓN visible que invita a ampliar (la tarjeta entera es
+   clicable, pero este es el affordance que lo hace obvio) */
+.qt-foot {
+    margin: 10px -12px -10px -12px;     /* sangra hasta los bordes de la card */
+    padding: 6px 0 7px 0;
+    border-top: 1px solid var(--hairline-2);
+    background: rgba(255, 255, 255, 0.035);
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--text-2);
+    line-height: 1;
+    letter-spacing: 0.02em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color var(--dur-2) var(--ease-out),
+                background var(--dur-2) var(--ease-out);
+}
+.qt-foot-txt {
+    font-size: 0.56rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: inherit;
+}
+.stMain div[class*="st-key-qtile_"]:hover .qt-foot {
+    color: var(--accent);
+    background: rgba(var(--accent-rgb), 0.08);
+}
+
+/* Overlay clicable de la tile (patrón sbcardbtn_) */
+.stMain [class*="st-key-qtilebtn_"] {
+    position: absolute !important;
+    inset: 0 !important;
+    width: auto !important; min-width: 0 !important; height: auto !important;
+    margin: 0 !important; padding: 0 !important;
+    z-index: 5; opacity: 0 !important;
+}
+.stMain [class*="st-key-qtilebtn_"] [data-testid="stButton"] {
+    width: 100% !important; height: 100% !important; animation: none !important;
+}
+.stMain [class*="st-key-qtilebtn_"] button {
+    width: 100% !important; height: 100% !important; min-height: 0 !important;
+    margin: 0 !important; transform: none !important; cursor: pointer;
+}
+
+/* ── Responsive Whop: <640px Streamlit APILA las st.columns → grid 3col ── */
+@media (max-width: 640px) {
+    .stMain [data-testid="stHorizontalBlock"]:has(div[class*="st-key-qtile_"]) {
+        display: grid !important;
+        grid-template-columns: repeat(3, 1fr) !important;
+        gap: 8px !important;
+    }
+    .stMain [data-testid="stHorizontalBlock"]:has(div[class*="st-key-qtile_"]) [data-testid="stColumn"] {
+        width: 100% !important;
+        min-width: 0 !important;
+        flex: none !important;
+    }
+    /* El Live Market Pulse también se apilaba en 1 columna: grid 3×2 */
+    .stMain [data-testid="stHorizontalBlock"]:has(.market-pulse-card) {
+        display: grid !important;
+        grid-template-columns: repeat(3, 1fr) !important;
+        gap: 8px !important;
+    }
+    .stMain [data-testid="stHorizontalBlock"]:has(.market-pulse-card) [data-testid="stColumn"] {
+        width: 100% !important;
+        min-width: 0 !important;
+        flex: none !important;
+    }
+    /* Card apilada (<640 las columnas se apilan solas): el divisor "O"
+       pasa de vertical a horizontal */
+    .hz-or { flex-direction: row !important; min-height: 0 !important; height: auto !important; margin: 2px 0 !important; }
+    .hz-or-line { width: auto !important; min-height: 0 !important; height: 1px !important; flex: 1 1 auto; min-width: 34px;
+        background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb), 0.35), transparent) !important; }
+    .hz-sub { min-height: 0 !important; }
+}
+@media (max-width: 900px) {
+    .stMain div[class*="st-key-qtile_"] { padding: 10px 9px 8px 9px; }
+    .stMain div[class*="st-key-qtile_"] .tt-symbol { font-size: 0.9rem; }
+    .stMain div[class*="st-key-qtile_"] .qt-price  { font-size: 0.92rem; }
+    .stMain div[class*="st-key-qtile_"] .qt-foot   { margin: 7px -9px -8px -9px; }
+}
+
+/* ── REFUERZO FINAL: overlays clicables (tiles y sidebar) ───────────────
+   Al final del stylesheet y con specificity alta: ninguna regla posterior
+   de Streamlit o de este fichero puede ganarles el position/opacity. */
+.stMain [data-testid="stElementContainer"][class*="st-key-qtilebtn_"] {
+    position: absolute !important;
+    inset: 0 !important;
+    width: auto !important; min-width: 0 !important; height: auto !important;
+    margin: 0 !important; padding: 0 !important;
+    z-index: 5 !important; opacity: 0 !important;
+}
+.stMain [data-testid="stElementContainer"][class*="st-key-qtilebtn_"] [data-testid="stButton"] {
+    width: 100% !important; height: 100% !important; animation: none !important;
+}
+.stMain [data-testid="stElementContainer"][class*="st-key-qtilebtn_"] button {
+    width: 100% !important; height: 100% !important; min-height: 0 !important;
+    margin: 0 !important; transform: none !important; cursor: pointer;
+}
+/* Cinturón: TODA la cadena interior del overlay se estira al 100% (si un
+   wrapper intermedio no se estira, el botón solo cubre una franja y el clic
+   real del ratón cae al vacío en el resto de la tarjeta). */
+.stMain [data-testid="stElementContainer"][class*="st-key-qtilebtn_"] [data-testid="stButton"] > div,
+.stMain [data-testid="stElementContainer"][class*="st-key-qtilebtn_"] [data-testid="stTooltipHoverTarget"],
+.stMain [data-testid="stElementContainer"][class*="st-key-qtilebtn_"] [data-testid="stTooltipIcon"],
+.stMain [data-testid="stElementContainer"][class*="st-key-qtilebtn_"] [data-testid="stTooltipIcon"] > div {
+    width: 100% !important; height: 100% !important;
 }
 
 </style>

@@ -1933,6 +1933,19 @@ def get_macro_data() -> dict:
 POPULAR_TICKERS = ["NVDA", "AAPL", "MSFT", "TSLA", "GOOGL", "META", "AMZN", "AMD", "AVGO", "NFLX", "COIN", "PLTR"]
 
 
+def get_live_snapshot_cached(tickers: list[str] = None) -> dict:
+    """SOLO el caché del snapshot (cero red, cero espera). Para elementos
+    decorativos como el ticker-tape del inicio: si aún no hay datos (primer
+    arranque), devuelve {} y el tape pinta solo los símbolos. NUNCA lanza."""
+    try:
+        if tickers is None:
+            tickers = POPULAR_TICKERS
+        key = f"snapshot_{'_'.join(sorted(tickers))[:80]}"
+        return _load_cache(key, ttl_hours=TTL_SNAPSHOT) or {}
+    except Exception:
+        return {}
+
+
 def get_live_snapshot(tickers: list[str] = None) -> dict:
     """Snapshot rápido de precio + cambio % diario para una lista de tickers.
     Cache de 5 minutos para no martillar yfinance."""
@@ -1946,7 +1959,11 @@ def get_live_snapshot(tickers: list[str] = None) -> dict:
 
     result = {}
     try:
-        data = yf.download(tickers, period="5d", interval="1d", auto_adjust=True,
+        # interval="1h" (antes "1d"): la MISMA llamada trae ~35 velas por
+        # ticker → el sparkline tiene textura intradía real (micro subidas y
+        # bajadas) en vez de 5 puntos planos. El precio y el % diario se
+        # calculan igual que antes: último cierre vs cierre del día previo.
+        data = yf.download(tickers, period="5d", interval="1h", auto_adjust=True,
                           progress=False, group_by="ticker", threads=True)
         for ticker in tickers:
             try:
@@ -1956,13 +1973,23 @@ def get_live_snapshot(tickers: list[str] = None) -> dict:
                     df = data.dropna()
                 if df.empty or len(df) < 2:
                     continue
-                price = float(df["Close"].iloc[-1])
-                prev = float(df["Close"].iloc[-2])
+                closes = df["Close"]
+                price = float(closes.iloc[-1])
+                # Cierre del día ANTERIOR (igual que con velas diarias)
+                daily_last = closes.groupby(
+                    [d.date() for d in closes.index]).last()
+                prev = (float(daily_last.iloc[-2]) if len(daily_last) >= 2
+                        else float(closes.iloc[0]))
                 change_pct = (price - prev) / prev * 100 if prev > 0 else 0
                 result[ticker] = {
                     "price": price,
                     "change_pct": change_pct,
                     "change_abs": price - prev,
+                    # Serie intradía 5d para el sparkline de las tiles.
+                    # Aditivo y retrocompatible: los lectores usan .get("closes")
+                    # y un caché viejo sin la clave caduca solo en ≤3 min.
+                    "closes": [round(float(x), 4)
+                               for x in closes.tail(40).tolist()],
                 }
             except Exception:
                 continue
