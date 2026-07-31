@@ -41,7 +41,7 @@ Retorna SIEMPRE este JSON:
 {
   "score": <0-100>,
   "conviction": "<HIGH|MEDIUM|LOW>",
-  "analysis": "<análisis de viabilidad futura CONCISO: 1-2 párrafos, máximo 6 líneas en total. Directo al grano, sin relleno>",
+  "analysis": "<1-2 párrafos, máximo 6 líneas, en ESPAÑOL NATURAL para quien empieza a invertir: si el negocio seguirá vigente y creciendo, y qué significa eso para su dinero>",
   "pros": ["<ventaja futura 1>", "<ventaja futura 2>", "<ventaja futura 3>"],
   "cons": ["<riesgo futuro 1>", "<riesgo futuro 2>"],
   "key_metrics": {

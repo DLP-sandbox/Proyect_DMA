@@ -54,7 +54,7 @@ Retorna SIEMPRE este JSON:
   "composite_score": <0-100>,
   "recommendation": "<MUY ATRACTIVO|ATRACTIVO|EN OBSERVACIÓN|EVITAR>",
   "conviction_level": "<HIGH|MEDIUM|LOW>",
-  "investment_thesis": "<tesis de inversión en EXACTAMENTE 2 párrafos, MÁXIMO 10 líneas en total — concisa y de alto nivel. Separa los párrafos con \\n\\n>",
+  "investment_thesis": "<EXACTAMENTE 2 párrafos, MÁXIMO 10 líneas, en ESPAÑOL NATURAL para quien empieza a invertir: párrafo 1, qué clase de negocio es y si vale la pena; párrafo 2, si ESTE es buen momento y qué esperar. Separa los párrafos con \\n\\n>",
   "key_strengths": ["<fortaleza 1>", "<fortaleza 2>", "<fortaleza 3>"],
   "key_risks": ["<riesgo 1>", "<riesgo 2>"],
   "entry_strategy": "<cuándo y cómo entrar — precio ideal, condición técnica, tamaño>",

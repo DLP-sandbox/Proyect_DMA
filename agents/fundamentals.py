@@ -26,7 +26,7 @@ Retorna SIEMPRE este JSON exacto (sin markdown adicional fuera del bloque):
 {
   "score": <número 0-100>,
   "conviction": "<HIGH|MEDIUM|LOW>",
-  "analysis": "<análisis CONCISO: 1-2 párrafos, máximo 6 líneas en total. Directo al grano, sin relleno ni repeticiones>",
+  "analysis": "<1-2 párrafos, máximo 6 líneas, en ESPAÑOL NATURAL para quien empieza a invertir: qué tan sano es el negocio y qué significa para su dinero — no enumeres métricas, explica su conclusión>",
   "pros": ["<pro 1>", "<pro 2>", "<pro 3>"],
   "cons": ["<con 1>", "<con 2>"],
   "key_metrics": {

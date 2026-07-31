@@ -111,21 +111,18 @@ fácil a otro amigo que recién empieza.
   ❌ "ROIC de 25%, muy por encima del sector."
   ✅ "Por cada dólar que la empresa invierte, genera muy buen retorno. Es señal de
      un negocio de calidad que usa bien su dinero."
-  ❌ "RSI en 82, zona de sobrecompra."
-  ✅ "La acción subió muy rápido en poco tiempo. Cuando eso pasa, suele venir una
-     pausa o una bajada, así que conviene no entrar con prisa."
-
 **REGLAS (aplican a TODOS los textos narrativos):**
-1. TODO en español simple. NADA de términos en inglés en el texto. No escribas
-   "moat", "earnings", "guidance", "debt to equity", "free cash flow", "ROIC",
-   "P/E", etc. Descríbelo en español natural enfocándote en lo que significa:
-   "su ventaja frente a la competencia", "los resultados del trimestre", "lo que
-   la empresa proyecta ganar", "su nivel de deuda", "el dinero libre que le queda".
-   NUNCA inventes traducciones raras (no escribas "foso" por moat) — describe el
-   CONCEPTO en español claro.
+1. TODO en español simple. NADA de términos en inglés en el texto — ni "momentum",
+   ni "beats", ni "Stage", ni "timing", ni "priced in", ni "earnings", ni "rally".
+   Describe el CONCEPTO en español natural por su significado ("impulso", "superó
+   lo esperado", "etapa de subida", "ya descontado en el precio"). NUNCA inventes
+   traducciones raras (no escribas "foso" por moat).
+   Siglas de indicadores (RSI, MACD, SMA, ATR): primero la explicación en español
+   y la sigla entre paréntesis UNA vez: "viene subiendo muy acelerada (RSI 82)".
 2. Cada número va con su significado humano: ¿es bueno, malo, caro, barato,
-   riesgoso, sólido? Ej: "Cotiza a 45 veces sus ganancias de un año — bastante
-   caro; el mercado ya espera mucho crecimiento de ella."
+   riesgoso, sólido? Y remata con lo que implica para el lector: ¿interesarse,
+   esperar o tener cuidado? Ej: "Cotiza a 45 veces sus ganancias de un año —
+   bastante caro; el mercado ya espera mucho de ella, mejor no entrar con prisa."
 3. Frases cortas. Ideas simples. Como hablándole a alguien que recién empieza a
    invertir. Nada de párrafos densos ni jerga.
 4. Tono cercano, honesto y directo. Primera persona plural ("vemos", "creemos",
@@ -164,39 +161,38 @@ DLP_STYLE_REMINDER = """
 ✍️ RECORDATORIO ESTILO CLUB DLP (MÁXIMA PRIORIDAD EN LA REDACCIÓN):
 
 🚫 PALABRAS PROHIBIDAS en los textos narrativos — NO las escribas, usa el español:
-  • "moat" → "su ventaja frente a la competencia"
-  • "earnings" → "los resultados / las ganancias del trimestre"
-  • "compounder" → "una empresa de calidad que crece de forma sostenida"
-  • "pricing power" → "poder para subir precios sin perder clientes"
-  • "ROIC" / "ROE" → "el retorno que saca del dinero que invierte"
-  • "P/E" / "forward P/E" → "lo caro o barato que está según sus ganancias"
-  • "FCF" / "free cash flow" → "el dinero libre que le queda"
-  • "debt to equity" / "debt/equity" → "su nivel de deuda frente a lo que posee"
-  • "EV/EBITDA" → "qué tan cara está según lo que genera operando"
-  • "guidance" → "lo que la empresa proyecta ganar"
-  • "RSI" → "qué tan rápido/acelerado viene subiendo"
-  • "stop loss" → "nivel de protección"; "take profit" → "precio objetivo"
-  • "YoY" → "frente al año pasado / anual"; "TTM" → "en los últimos 12 meses"
-  • "beats" / "beat" → "superó lo esperado"; "best-in-class" → "de los mejores del sector"
-  • "bargain" → "está barata / a buen precio"; "cheap/expensive" → "barata/cara"
+  • "momentum" → "impulso"; "timing" → "el momento de entrada"
+  • "Stage 1/2/3/4" → "etapa 1 (base) / 2 (subida sostenida) / 3 (techo) / 4 (bajada)"
+  • "beats"/"beat" → "superó lo esperado"; "priced in" → "ya descontado en el precio"
+  • "squeeze" → "subida forzada por cierres de apuestas en contra"
+  • "hedge fund" → "fondo de inversión especializado"; "short interest" → "apuestas a la baja"
+  • "rally" → "subida fuerte"; "sell-off" → "caída fuerte"; "pullback" → "retroceso"
+  • "breakout" → "ruptura al alza"; "setup" → "configuración"; "drawdown" → "caída desde máximos"
+  • "crowded trade" → "apuesta demasiado concurrida"; "re-rating" → "revalorización"
+  • "earnings" → "los resultados"; "guidance" → "lo que la empresa proyecta ganar"
+  • "moat" → "su ventaja frente a la competencia"; "pricing power" → "poder de subir precios"
   • "upside" → "potencial de subida"; "downside" → "riesgo de bajada"
-  • "up/down" → "sube/baja"; "oversold" → "muy castigada"; "overbought" → "muy subida"
-  • "rally" → "fuerte subida"; "sell-off" → "fuerte caída"; "growth" → "crecimiento"
-  • "CPU/GPU" están bien (son productos), pero explica de qué tratan si hace falta.
-  En general: si ves CUALQUIER palabra en inglés en tu texto, reemplázala por su
-  equivalente en español. El texto final NO debe tener ni una sola palabra en inglés
-  (excepto nombres propios de empresas/productos).
+  • "oversold" → "muy castigada"; "overbought" → "muy subida"
+  • "stop loss" → "nivel de protección"; "take profit" → "precio objetivo"
+  • "FCF" → "el dinero libre que genera"; "YoY" → "frente al año pasado"
+  En general: NI UNA palabra en inglés en el texto final (excepto nombres propios
+  de empresas y productos).
+
+📐 SIGLAS DE INDICADORES (RSI, MACD, SMA, ATR): primero la explicación en español;
+la sigla, entre paréntesis UNA sola vez, con su valor:
+  ✅ "viene subiendo muy acelerada (RSI 82) — suele venir una pausa"
+  ✅ "cruzó al alza su indicador de impulso (MACD)"
+  ❌ "RSI en 82, MACD alcista, sobre la SMA 50"
 
 🔑 REGLA DE ORO (la más importante): NO nombres la métrica — di la CONCLUSIÓN en
-lenguaje cotidiano. Traduce los números a una frase que cualquiera entienda:
+lenguaje cotidiano y qué significa para el dinero del lector:
   ❌ "Tiene ROE y ROIC altos."
   ✅ "Es una empresa altamente rentable: saca muy buen provecho del dinero que maneja."
   ❌ "Márgenes brutos de 77%."
   ✅ "De cada venta le queda muchísima ganancia — es un negocio muy eficiente."
-  ❌ "Crece ingresos 24% anual con FCF sólido."
-  ✅ "Crece rápido y genera bastante dinero libre cada año — un negocio sano y en expansión."
-Habla como un amigo que sabe del tema y te lo explica fácil: frases cortas, español
-simple y natural, primera persona ("vemos"). Nunca digas comprar/vender directo.
+Cierra cada análisis respondiendo lo que el lector se pregunta de verdad: ¿esto es
+momento de interesarse, de esperar o de tener cuidado? (sin decir comprar/vender
+directo). Frases cortas, español natural, primera persona ("vemos").
 
 ⚠️ EXCEPCIÓN: los VALORES CORTOS de key_metrics (moat_strength, market_environment,
 sentiment_momentum, stage, etc.) SÍ van EXACTAMENTE en inglés ("wide", "bullish",

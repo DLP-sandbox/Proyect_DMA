@@ -42,7 +42,7 @@ Retorna SIEMPRE este JSON con las TRES secciones:
   "macro": {
     "score": <0-100>,
     "conviction": "<HIGH|MEDIUM|LOW>",
-    "analysis": "<análisis macro CONCISO: máximo 4 líneas. Directo, sin relleno>",
+    "analysis": "<máximo 4 líneas, en ESPAÑOL NATURAL: si el entorno del mercado ayuda o estorba a esta acción, y qué significa para el lector>",
     "pros": ["<las 3 vientos de cola macro MÁS importantes>"],
     "cons": ["<los 3 vientos en contra macro MÁS importantes>"],
     "key_metrics": {
@@ -59,7 +59,7 @@ Retorna SIEMPRE este JSON con las TRES secciones:
   "sentiment": {
     "score": <0-100>,
     "conviction": "<HIGH|MEDIUM|LOW>",
-    "analysis": "<análisis de sentimiento CONCISO: máximo 4 líneas. Directo, sin relleno>",
+    "analysis": "<máximo 4 líneas, en ESPAÑOL NATURAL: qué se dice de la empresa y si eso crea oportunidad o riesgo para el lector>",
     "pros": ["<las 3 señales positivas de sentimiento MÁS importantes>"],
     "cons": ["<los 3 riesgos de narrativa MÁS importantes>"],
     "key_metrics": {
@@ -76,7 +76,7 @@ Retorna SIEMPRE este JSON con las TRES secciones:
   "catalysts": {
     "score": <0-100>,
     "conviction": "<HIGH|MEDIUM|LOW>",
-    "analysis": "<análisis de catalizadores CONCISO: máximo 4 líneas. Directo, sin relleno>",
+    "analysis": "<máximo 4 líneas, en ESPAÑOL NATURAL: qué eventos vienen, cuándo, y qué debería hacer el lector con esa información>",
     "pros": ["<los 3 catalizadores positivos MÁS importantes>"],
     "cons": ["<los 3 riesgos de evento MÁS importantes>"],
     "key_metrics": {

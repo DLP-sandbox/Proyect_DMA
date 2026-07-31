@@ -48,7 +48,7 @@ Retorna SIEMPRE este JSON:
 {
   "score": <0-100, refleja la gestionabilidad TOTAL del riesgo>,
   "conviction": "<HIGH|MEDIUM|LOW>",
-  "analysis": "<análisis de riesgo y sizing CONCISO: 1-2 párrafos, máximo 5 líneas en total. Directo al grano, sin relleno>",
+  "analysis": "<1-2 párrafos, máximo 5 líneas, en ESPAÑOL NATURAL para quien empieza a invertir: cuánto puede perder y ganar desde aquí, y si la relación compensa>",
   "pros": ["<ventaja de riesgo 1>", "<ventaja de riesgo 2>"],
   "cons": ["<riesgo 1>", "<riesgo 2>"],
   "key_metrics": {

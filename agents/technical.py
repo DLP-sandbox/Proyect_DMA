@@ -42,7 +42,7 @@ Retorna SIEMPRE este JSON exacto:
 {
   "score": <0-100>,
   "conviction": "<HIGH|MEDIUM|LOW>",
-  "analysis": "<análisis técnico CONCISO: 1-2 párrafos, máximo 6 líneas en total. Directo al grano, sin relleno>",
+  "analysis": "<1-2 párrafos, máximo 6 líneas, en ESPAÑOL NATURAL para quien empieza a invertir: qué hace el precio y qué significa para su dinero — no enumeres indicadores; siglas solo entre paréntesis tras su explicación>",
   "pros": ["<señal alcista 1>", "<señal alcista 2>", "<señal alcista 3>"],
   "cons": ["<señal bajista 1>", "<señal bajista 2>"],
   "key_metrics": {

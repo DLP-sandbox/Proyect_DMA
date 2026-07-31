@@ -48,9 +48,48 @@ _ACRONYM_RULES = [
     (r"\bTTM\b",        "de los últimos 12 meses"),
 ]
 
+# ── Siglas de indicadores técnicos: la decisión pactada es "explicación primero,
+# sigla entre paréntesis UNA vez": «viene subiendo muy acelerada (RSI 68)».
+# El lookbehind (?<!\() evita re-tocar una sigla que YA está entre paréntesis —
+# eso hace las reglas idempotentes y respeta los textos que el modelo ya escribe
+# bien. Los reemplazos empiezan por sustantivo con género estable ("indicador",
+# "media") para que la concordancia del artículo previo funcione o no haga falta.
+_INDICATOR_RULES = [
+    # Si el modelo YA escribió "indicador/índice RSI", no duplicar "indicador"
+    (r"(?<!\()\b[Ii]ndicador\s+RSI\b",  "indicador de aceleración (RSI)"),
+    (r"(?<!\()\b[Ii]ndicador\s+MACD\b", "indicador de impulso (MACD)"),
+    (r"(?<!\()\b[Íí]ndice\s+RSI\b",     "indicador de aceleración (RSI)"),
+    # Específicos primero (más contexto → mejor español)
+    (r"(?<!\()\bSMA\s*20\b",  "media móvil de 20 días (SMA 20)"),
+    (r"(?<!\()\bSMA\s*50\b",  "media móvil de 50 días (SMA 50)"),
+    (r"(?<!\()\bSMA\s*150\b", "media móvil de 150 días (SMA 150)"),
+    (r"(?<!\()\bSMA\s*200\b", "media móvil de 200 días (SMA 200)"),
+    (r"(?<!\()\bRSI\b",       "indicador de aceleración (RSI)"),
+    (r"(?<!\()\bMACD\b",      "indicador de impulso (MACD)"),
+    (r"(?<!\()\bSMA\b",       "media móvil (SMA)"),
+    (r"(?<!\()\bEMA\b",       "media móvil exponencial (EMA)"),
+    (r"(?<!\()\bATR\b",       "medida de volatilidad (ATR)"),
+    (r"(?<!\()\bOBV\b",       "indicador de volumen acumulado (OBV)"),
+]
+
+# ── Etapas del ciclo (Stan Weinstein). El modelo escribe "Stage 2" a secas; el
+# lector principiante no sabe qué es. Cada etapa lleva su significado UNA vez.
+_STAGE_RULES = [
+    (r"(?<!\()\bStage\s*1\b", "etapa 1 (formación de base)"),
+    (r"(?<!\()\bStage\s*2\b", "etapa 2 (subida sostenida)"),
+    (r"(?<!\()\bStage\s*3\b", "etapa 3 (techo)"),
+    (r"(?<!\()\bStage\s*4\b", "etapa 4 (bajada)"),
+    (r"\bStage\b",            "etapa"),
+]
+
 # ── Palabras: case-INSENSITIVE. ORDEN IMPORTA (más específico primero) para que
 # "earnings call" se traduzca antes que "earnings" suelto.
 _WORD_RULES = [
+    # ── Auto-reparación: textos ya guardados que una versión anterior del
+    # filtro dejó con duplicaciones. Idempotentes y sin falsos positivos.
+    (r"\bindicador\s+indicador\b",                 "indicador"),
+    (r"\bmomento\s+de\s+entrada\s+para\s+entrar\b", "momento para entrar"),
+    # ── Bloque original ──
     (r"earnings\s+call",  "presentación de resultados"),
     (r"earnings\s+report","informe de resultados"),
     (r"\bearnings\b",     "resultados"),
@@ -67,12 +106,63 @@ _WORD_RULES = [
     (r"\bovervalued\b",   "sobrevalorada"),
     (r"\bundervalued\b",  "infravalorada"),
     (r"best[- ]in[- ]class", "el mejor de su categoría"),
+
+    # ── Ampliación guiada por la auditoría real (26-44 fugas/análisis) ──
+    # ORDEN: lo compuesto va antes que la palabra suelta. Los reemplazos evitan
+    # empezar por artículo (el original suele traerlo: "el momentum" → "el
+    # impulso") y, cuando el sustantivo es femenino, su cabeza está registrada
+    # en _FEM_HEAD para que la concordancia del artículo se corrija sola.
+    (r"\bmomentum\b",         "impulso"),
+    (r"\bbeats?\s+consecutivos\b", "trimestres consecutivos superando lo esperado"),
+    (r"\bbeat\s+rate\b",      "tasa de aciertos"),
+    (r"\bbeats\b",            "resultados por encima de lo esperado"),
+    (r"\bbeat\b",             "superó lo esperado"),
+    # "ya priced in" → sin duplicar el "ya"; "priced in en el precio" → sin
+    # duplicar el complemento (el modelo a veces ya lo escribe redundante)
+    (r"\bya\s+priced[- ]in\b(\s+en\s+el\s+precio\b)?", "ya descontado en el precio"),
+    (r"\bpriced[- ]in\b(\s+en\s+el\s+precio\b)?",       "descontado en el precio"),
+    (r"\bre[- ]rating\b",     "revalorización del múltiplo"),
+    (r"\bshort\s+squeeze\b",  "subida forzada por cierres de apuestas en contra"),
+    (r"\bsqueeze\b",          "subida forzada por cierres de apuestas en contra"),
+    (r"\bhedge\s+funds\b",    "fondos de inversión especializados"),
+    (r"\bhedge\s+fund\b",     "fondo de inversión especializado"),
+    (r"\brally\b",            "subida fuerte"),
+    (r"\bsell[- ]?offs?\b",   "caída fuerte del mercado"),
+    (r"\bpullbacks?\b",       "retroceso"),
+    (r"\bbreakouts?\b",       "ruptura al alza"),
+    (r"\boversold\b",         "sobrevendida"),
+    (r"\boverbought\b",       "sobrecomprada"),
+    # "timing de entrada" / "timing para entrar" → sin duplicar el complemento
+    (r"\btiming\s+de\s+entrada\b",  "momento de entrada"),
+    (r"\btiming\s+para\s+entrar\b", "momento para entrar"),
+    (r"\btiming\b",           "momento de entrada"),
+    (r"\bsetups?\b",          "configuración técnica"),
+    (r"\btriggers?\b",        "detonante"),
+    (r"\bdrawdowns?\b",       "caída desde máximos"),
+    (r"\bcrowded\s+trade\b",  "apuesta demasiado concurrida"),
+    (r"\bshort\s+interest\b", "nivel de apuestas a la baja"),
+    (r"\bswing\s+low\b",      "mínimo reciente"),
+    (r"\bswing\s+high\b",     "máximo reciente"),
+    (r"\bfree\s+cash\s+flow\b", "flujo de caja libre"),
+    (r"\bcash\s+flow\b",      "flujo de caja"),
+    (r"\brevenue\s+growth\b", "crecimiento de ingresos"),
+    (r"\brevenue\b",          "ingresos"),
+    (r"\bentorno\s+risk[- ]on\b",  "entorno de apetito por el riesgo"),
+    (r"\bentorno\s+risk[- ]off\b", "entorno de aversión al riesgo"),
+    (r"\brisk[- ]on\b",       "apetito por el riesgo"),
+    (r"\brisk[- ]off\b",      "aversión al riesgo"),
+    (r"\bcatalysts\b",        "catalizadores"),
+    (r"\bcatalyst\b",         "catalizador"),
 ]
 
 # Compilamos una sola vez al importar (rendimiento). Cada entrada es
-# (patrón_compilado, reemplazo).
+# (patrón_compilado, reemplazo). Los indicadores van case-SENSITIVE (el modelo
+# los escribe siempre en mayúsculas y así no chocamos con palabras españolas);
+# las etapas y palabras, case-insensitive.
 _COMPILED = (
     [(re.compile(p), r) for p, r in _ACRONYM_RULES]
+    + [(re.compile(p), r) for p, r in _INDICATOR_RULES]
+    + [(re.compile(p, re.IGNORECASE), r) for p, r in _STAGE_RULES]
     + [(re.compile(p, re.IGNORECASE), r) for p, r in _WORD_RULES]
 )
 
@@ -104,7 +194,11 @@ def _make_replacer(replacement: str):
 # artículos directamente delante de un sustantivo FEMENINO conocido. La
 # concordancia del adjetivo que va después (p. ej. "bajo"→"baja") depende del
 # contexto y se deja como está (sigue siendo español entendible).
-_FEM_HEAD = r"(relación|ventajas|ventaja|ganancia|presentación|empresas|empresa)"
+# OJO con el orden dentro de la alternación: la forma larga antes que su prefijo
+# (ventajas|ventaja, apuestas|apuesta) para que el plural no se corte a mitad.
+_FEM_HEAD = (r"(relación|ventajas|ventaja|ganancias|ganancia|presentación|"
+             r"empresas|empresa|subida|caídas|caída|ruptura|configuración|"
+             r"revalorización|apuestas|apuesta|tasa|medias|media|medida|etapa)")
 
 
 def _art_replacer(target: str):
@@ -128,9 +222,15 @@ _AGREEMENT_RULES = [
 ]
 
 
+_EUPHONY = re.compile(r"\by\s+(?=[iI]ndicador)")
+
+
 def _fix_agreement(text: str) -> str:
     for pattern, repl in _AGREEMENT_RULES:
         text = pattern.sub(repl, text)
+    # Eufonía del español: "y" → "e" delante de palabra que empieza por i-
+    # (solo la aplicamos a los sustantivos que nosotros mismos introducimos).
+    text = _EUPHONY.sub("e ", text)
     return text
 
 
@@ -179,6 +279,20 @@ _ANALYSIS_TEXT_FIELDS = (
 )
 _ANALYSIS_LIST_FIELDS = ("key_strengths", "key_risks")
 
+# ── LISTA BLANCA de campos narrativos dentro de raw_data ──────────────────
+# La UI muestra estos textos en las tarjetas de insight de cada sección
+# (dcf_thesis, macro_verdict, dominant_narrative…) y hasta ahora NO pasaban por
+# el filtro — era una de las tres fugas de jerga detectadas en la auditoría.
+# Es lista BLANCA a propósito: cualquier clave de raw_data que no esté aquí
+# (números, dicts, enums como asymmetry_direction, datos de holders…) queda
+# intacta, que es la garantía de siempre — el dashboard lee esos valores
+# literalmente y traducirlos lo rompería.
+_RAW_DATA_NARRATIVE_KEYS = (
+    "key_insight", "top_catalyst", "macro_verdict", "dominant_narrative",
+    "opportunity", "risk_verdict", "stop_rationale", "dcf_thesis",
+    "earnings_quality", "future_thesis", "key_risks",
+)
+
 
 def clean_analysis_language(analysis):
     """Limpia la jerga inglesa residual de un StockAnalysis, SOLO en sus campos
@@ -207,6 +321,16 @@ def clean_analysis_language(analysis):
                     rep.pros = _clean_list(rep.pros)
                 if hasattr(rep, "cons"):
                     rep.cons = _clean_list(rep.cons)
+                # Campos narrativos de raw_data (LISTA BLANCA — ver arriba).
+                # Solo strings o listas de strings; cualquier otro tipo se salta.
+                rd = getattr(rep, "raw_data", None)
+                if isinstance(rd, dict):
+                    for k in _RAW_DATA_NARRATIVE_KEYS:
+                        v = rd.get(k)
+                        if isinstance(v, str):
+                            rd[k] = _clean_text(v)
+                        elif isinstance(v, list):
+                            rd[k] = _clean_list(v)
     except Exception:
         pass
     return analysis

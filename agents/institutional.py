@@ -23,7 +23,7 @@ Retorna SIEMPRE este JSON:
 {
   "score": <0-100>,
   "conviction": "<HIGH|MEDIUM|LOW>",
-  "analysis": "<análisis de flujo institucional CONCISO: 1-2 párrafos, máximo 5 líneas en total. Directo al grano, sin relleno>",
+  "analysis": "<1-2 párrafos, máximo 5 líneas, en ESPAÑOL NATURAL para quien empieza a invertir: qué están haciendo los grandes fondos y los directivos, y qué le dice eso al lector>",
   "pros": ["<señal positiva 1>", "<señal positiva 2>"],
   "cons": ["<señal negativa 1>", "<señal negativa 2>"],
   "key_metrics": {
