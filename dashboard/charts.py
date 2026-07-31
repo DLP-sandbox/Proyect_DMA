@@ -800,6 +800,152 @@ def build_sector_heatmap(sector_performance: dict) -> go.Figure:
     return fig
 
 
+def build_sector_rotation(sector_performance: dict, height: int = 340) -> go.Figure:
+    """Rotación sectorial con el lenguaje de las barras de calificación.
+
+    A la IZQUIERDA las barras (con riel de fondo, como los Pilares de
+    Fundamentales y Futuro); un SEPARADOR vertical; y a la DERECHA los números
+    de rendimiento ALINEADOS EN COLUMNA.
+
+    Cómo se consigue la alineación perfecta: la zona de trazado se encoge con
+    `xaxis.domain` y los números se dibujan como ANOTACIONES ancladas al papel
+    (`xref="paper"`, x fija) pero a la categoría en vertical (`yref="y"`). Así
+    cada número cae exactamente a la altura de su barra y todos comparten la
+    misma x — que es lo que no se puede lograr con `textposition="outside"`,
+    donde el número queda pegado al final de cada barra.
+
+    COLOR: mezcla de umbrales ABSOLUTOS y escala RELATIVA (ver `_color` abajo).
+    Barra y número comparten color para que cuenten la misma historia.
+
+    NUNCA lanza: con {} devuelve una figura vacía.
+    """
+    if not sector_performance:
+        return go.Figure()
+
+    try:
+        pares = [(str(k), float(v)) for k, v in sector_performance.items()
+                 if isinstance(v, (int, float)) and v == v]   # v==v descarta NaN
+    except Exception:
+        return go.Figure()
+    if not pares:
+        return go.Figure()
+
+    # Menor arriba → mayor abajo; Plotly dibuja el eje Y de abajo a arriba, así
+    # que el mejor sector queda ARRIBA del todo.
+    pares.sort(key=lambda x: x[1])
+    etiquetas = [p[0] for p in pares]
+    valores = [p[1] for p in pares]
+
+    lo, hi = min(valores), max(valores)
+
+    # ── Colorimetría propia de esta gráfica ──────────────────────────────
+    # Mezcla de umbrales ABSOLUTOS y escala RELATIVA al mercado:
+    #   · negativo      → rojo
+    #   · 0% a 5%       → naranja
+    #   · más de 5%     → verde, pero con degradado RELATIVO: justo por encima
+    #                     del 5% tira a amarillento y se va oscureciendo hasta
+    #                     el sector con MÁS rendimiento, que siempre marca el
+    #                     extremo verde. Así el mejor del año se distingue
+    #                     aunque todo el mercado esté en verde.
+    VERDE_CLARO = (0xC9, 0xD9, 0x4B)   # amarillento, justo pasado el 5%
+    VERDE_FUERTE = (0x19, 0x9C, 0x5E)  # verde profundo, en el máximo
+
+    def _color(v):
+        if v < 0:
+            return "#F1495F"
+        if v < 5.0:
+            return "#E0854E"
+        # Posición dentro del tramo verde: 5% → 0.0, máximo → 1.0
+        tramo = hi - 5.0
+        t = 0.0 if tramo <= 0 else max(0.0, min(1.0, (v - 5.0) / tramo))
+        r = round(VERDE_CLARO[0] + (VERDE_FUERTE[0] - VERDE_CLARO[0]) * t)
+        g = round(VERDE_CLARO[1] + (VERDE_FUERTE[1] - VERDE_CLARO[1]) * t)
+        b = round(VERDE_CLARO[2] + (VERDE_FUERTE[2] - VERDE_CLARO[2]) * t)
+        return f"#{r:02X}{g:02X}{b:02X}"
+
+    colores = [_color(v) for v in valores]
+
+    # El riel va de 0 al máximo absoluto para que las barras negativas y
+    # positivas se lean sobre la misma referencia.
+    tope = max(abs(lo), abs(hi)) or 1.0
+
+    fig = go.Figure()
+
+    # Riel de fondo (mismo recurso visual que los Pilares): marca el recorrido
+    # completo disponible para que la barra se lea como progreso.
+    fig.add_trace(go.Bar(
+        y=etiquetas, x=[tope if v >= 0 else -tope for v in valores],
+        orientation="h", width=0.62,
+        marker=dict(color="rgba(255,255,255,0.035)", line=dict(width=0)),
+        showlegend=False, hoverinfo="skip",
+    ))
+
+    fig.add_trace(go.Bar(
+        y=etiquetas, x=valores, orientation="h", width=0.62,
+        marker=dict(color=colores, line=dict(width=0)),
+        marker_opacity=0.9,
+        showlegend=False, cliponaxis=False,
+        hovertemplate="<b>%{y}</b><br>%{x:+.1f}%<extra></extra>",
+    ))
+
+    fig.add_vline(x=0, line_color=MUTED, line_width=1, opacity=0.45)
+
+    # ── Columna de números a la derecha ──
+    # Más grandes y en negrita: antes quedaban demasiado finos para leerse.
+    anotaciones = []
+    for etiqueta, valor, color in zip(etiquetas, valores, colores):
+        anotaciones.append(dict(
+            xref="paper", x=0.995, xanchor="right",
+            yref="y", y=etiqueta, yanchor="middle",
+            text=f"<b>{valor:+.1f}%</b>".replace("-", "−"),   # menos tipográfico
+            showarrow=False,
+            font=dict(family="JetBrains Mono", size=14, color=color),
+        ))
+
+    # ── Subtítulos: uno a cada lado, en la MISMA línea horizontal ──
+    # Se hacen con anotaciones (no con `title`) porque así comparten `y` exacta.
+    for x, anclaje, texto in ((0.0, "left", "RENDIMIENTO POR SECTORES DEL MERCADO"),
+                              (1.0, "right", "ÚLTIMOS 12 MESES")):
+        anotaciones.append(dict(
+            xref="paper", x=x, xanchor=anclaje,
+            yref="paper", y=1.055, yanchor="bottom",
+            text=f"<b>{texto}</b>", showarrow=False,
+            font=dict(family="JetBrains Mono", size=11, color=MUTED),
+        ))
+
+    fig.update_layout(
+        paper_bgcolor=BG_MAIN,
+        plot_bgcolor=BG_CARD,
+        font=dict(color=TEXT, family="Inter", size=11),
+        height=height,
+        showlegend=False,
+        barmode="overlay",
+        # Margen superior algo mayor: los dos subtítulos viven por encima del
+        # área de trazado y necesitan aire para no recortarse.
+        margin=dict(l=10, r=12, t=52, b=10),
+        # La zona de barras se encoge para dejar sitio a la columna de números.
+        xaxis=dict(domain=[0.0, 0.845], gridcolor=GRID, zerolinecolor=GRID,
+                   tickfont=dict(color=MUTED, size=9), ticksuffix="%"),
+        yaxis=dict(gridcolor="rgba(0,0,0,0)", zerolinecolor=GRID,
+                   tickfont=dict(color=TEXT, size=10)),
+        annotations=anotaciones,
+    )
+
+    # Separador vertical entre las barras y los números. Plotly no tiene
+    # box-shadow, así que el brillo se apila: dos líneas anchas y muy
+    # transparentes (el halo) debajo de la línea nítida.
+    # OJO: se añaden con add_shape y NO por `shapes=` en update_layout, porque
+    # ahí Plotly FUSIONA por índice con la línea del cero que ya puso add_vline
+    # y se perdía una de las capas del halo.
+    for _ancho, _color_sep, _capa in ((7, "rgba(226,178,92,0.10)", "below"),
+                                      (3, "rgba(226,178,92,0.18)", "below"),
+                                      (1, "rgba(255,255,255,0.34)", "above")):
+        fig.add_shape(type="line", xref="paper", yref="paper",
+                      x0=0.875, x1=0.875, y0=0.02, y1=0.98,
+                      line=dict(color=_color_sep, width=_ancho), layer=_capa)
+    return fig
+
+
 # ── COMPONENTES REUTILIZABLES PARA TABS DE AGENTES ─────────────────────
 
 def build_compact_gauge(value: float, label: str = "", color: str = None,

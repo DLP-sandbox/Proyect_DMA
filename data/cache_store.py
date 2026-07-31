@@ -149,6 +149,76 @@ def save_cached_analysis(ticker: str, analysis) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# SNAPSHOT MACRO — el último registro bueno de índices y rotación sectorial
+# ─────────────────────────────────────────────────────────────────────────
+# `get_macro_data()` tarda ~4,4 s en frío y alimenta DOS bloques del inicio
+# (Live Market Pulse + Rotación Sectorial), así que la página se quedaba
+# esperando con una cinta de carga. Aquí se guarda el último registro para
+# poder pintar el bloque AL INSTANTE y refrescar por detrás.
+#
+# Además da resistencia: get_macro_data usa yfinance SIN cadena de respaldo
+# (la única función de datos que no la tiene), así que en Render —donde Yahoo
+# bloquea las IPs de datacenter— `sector_performance` puede llegar vacío y la
+# sección no se dibuja. Con el snapshot se sigue viendo el último dato bueno.
+#
+# NO lleva filtro de edad a propósito: su valor es justamente ser "lo último
+# que se supo", por viejo que sea. Es compartido: el primer miembro que abre
+# la app lo deja listo para todos los demás.
+
+MACRO_SNAPSHOT_KEY = "macro:snapshot"
+MACRO_SNAPSHOT_TTL = 7 * 24 * 60 * 60      # 7 días
+
+
+def save_macro_snapshot(macro) -> None:
+    """Guarda el último registro macro. Nunca lanza.
+
+    Solo guarda si trae rotación sectorial real: así un fallo de red (que
+    devuelve el dict a medias o vacío) JAMÁS pisa el último dato bueno."""
+    try:
+        if not isinstance(macro, dict) or not macro.get("sector_performance"):
+            return
+        from data.persistence import _make_json_safe
+        datos = _make_json_safe(macro)
+        try:
+            _command(["SET", MACRO_SNAPSHOT_KEY,
+                      json.dumps(datos, ensure_ascii=False),
+                      "EX", str(MACRO_SNAPSHOT_TTL)])
+        except Exception:
+            pass
+        try:
+            from data.market_data import _save_cache
+            _save_cache("macro_snapshot", datos)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def get_macro_snapshot():
+    """Último registro macro conocido, o None. Nunca lanza.
+
+    Mira primero Upstash (compartido) y luego el disco (para que en local, sin
+    credenciales, funcione igual)."""
+    try:
+        crudo = _command(["GET", MACRO_SNAPSHOT_KEY])
+        if crudo:
+            datos = json.loads(crudo)
+            if isinstance(datos, dict) and datos.get("sector_performance"):
+                return datos
+    except Exception:
+        pass
+    try:
+        from data.market_data import _load_cache
+        # TTL enorme: el snapshot no caduca, solo se sustituye por uno mejor.
+        datos = _load_cache("macro_snapshot", ttl_hours=24 * 365)
+        if isinstance(datos, dict) and datos.get("sector_performance"):
+            return datos
+    except Exception:
+        pass
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # HISTORIAL PERSISTENTE PARA LA BARRA LATERAL (Upstash — opcional, aislado)
 # ─────────────────────────────────────────────────────────────────────────
 # El disco de Streamlit Cloud es EFÍMERO: se borra al reiniciar el contenedor.
