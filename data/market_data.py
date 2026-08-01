@@ -1946,6 +1946,63 @@ def get_live_snapshot_cached(tickers: list[str] = None) -> dict:
         return {}
 
 
+def _snapshot_rescue_ticker(ticker: str):
+    """Rescate INDIVIDUAL de un ticker que faltó en el snapshot en lote.
+
+    Existe porque un fallo transitorio de Yahoo con UN símbolo dejaba su tile
+    del inicio vacía ("—") y, peor, el hueco se CACHEABA durante todo el TTL
+    (visto en producción con AAPL: las otras 11 cargaban y esa no). Cadena:
+
+      a) yfinance individual con velas de 1h — los fallos del lote suelen ser
+         por símbolo, y en solitario casi siempre responde (misma calidad:
+         precio fresco + sparkline intradía).
+      b) Nasdaq histórico diario — funciona con Yahoo bloqueado (Render).
+         El precio puede ser el cierre de ayer y el sparkline diario: mejor
+         un dato de ayer que un hueco.
+
+    Devuelve el dict con la MISMA forma que el snapshot, o None. NUNCA lanza."""
+    # a) yfinance individual (intradía)
+    try:
+        df = _yt(ticker).history(period="5d", interval="1h")
+        if df is not None and not df.empty and "Close" in df.columns:
+            closes = df["Close"].dropna()
+            if len(closes) >= 2:
+                price = float(closes.iloc[-1])
+                daily_last = closes.groupby(
+                    [d.date() for d in closes.index]).last()
+                prev = (float(daily_last.iloc[-2]) if len(daily_last) >= 2
+                        else float(closes.iloc[0]))
+                if prev > 0:
+                    return {
+                        "price": price,
+                        "change_pct": (price - prev) / prev * 100,
+                        "change_abs": price - prev,
+                        "closes": [round(float(x), 4)
+                                   for x in closes.tail(40).tolist()],
+                    }
+    except Exception:
+        pass
+    # b) Nasdaq diario (infalible en datacenter)
+    try:
+        df = _get_price_history_from_nasdaq(ticker, period="1mo")
+        if df is not None and not df.empty and "Close" in df.columns:
+            closes = df["Close"].dropna()
+            if len(closes) >= 2:
+                price = float(closes.iloc[-1])
+                prev = float(closes.iloc[-2])
+                if prev > 0:
+                    return {
+                        "price": price,
+                        "change_pct": (price - prev) / prev * 100,
+                        "change_abs": price - prev,
+                        "closes": [round(float(x), 4)
+                                   for x in closes.tail(10).tolist()],
+                    }
+    except Exception:
+        pass
+    return None
+
+
 def get_live_snapshot(tickers: list[str] = None) -> dict:
     """Snapshot rápido de precio + cambio % diario para una lista de tickers.
     Cache de 5 minutos para no martillar yfinance."""
@@ -1995,6 +2052,33 @@ def get_live_snapshot(tickers: list[str] = None) -> dict:
                 continue
     except Exception:
         pass
+
+    # ── Rescate por ticker: que un fallo puntual del lote (o el bloqueo de
+    # Yahoo en cloud) JAMÁS deje una tile vacía ni se cachee el hueco. Los
+    # ausentes se recuperan EN PARALELO (el coste es el más lento, no la suma).
+    faltantes = [t for t in tickers if t not in result]
+    if faltantes:
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=min(6, len(faltantes))) as ex:
+                for t, rec in zip(faltantes,
+                                  ex.map(_snapshot_rescue_ticker, faltantes)):
+                    if rec:
+                        result[t] = rec
+        except Exception:
+            pass
+
+    # Último recurso: el registro previo aunque su TTL haya caducado — un
+    # precio de hace unos minutos es mejor que un hueco, y el TTL corto (3 min)
+    # garantiza que se reintenta enseguida de todas formas.
+    if len(result) < len(tickers):
+        try:
+            viejo_snap = _load_cache(key, ttl_hours=24) or {}
+            for t in tickers:
+                if t not in result and isinstance(viejo_snap.get(t), dict):
+                    result[t] = viejo_snap[t]
+        except Exception:
+            pass
 
     if result:
         _save_cache(key, result)
