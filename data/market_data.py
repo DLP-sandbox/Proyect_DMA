@@ -1843,6 +1843,132 @@ def _nasdaq_json(path: str, _intentos: int = 2) -> Optional[dict]:
     return None
 
 
+# Códigos de operación del Form 4 → el vocabulario que YA usa la app
+# ("compra"/"venta"/"concesión"/"donación"/"otra" gobiernan el color de la
+# tabla en dashboard/app.py). P = compra en mercado abierto, S = venta,
+# A = concesión de acciones, G = donación; el resto (M ejercicio de opciones,
+# F retención fiscal, D entrega al emisor, C conversión) va a "otra".
+_SEC_CODIGO_TIPO = {"P": "compra", "S": "venta", "A": "concesión", "G": "donación"}
+
+
+def _get_insiders_from_sec(ticker: str, max_formularios: int = 12) -> dict:
+    """ÚLTIMO eslabón de la cadena de insiders: los Form 4 que los directivos
+    presentan a la SEC.
+
+    POR QUÉ HACE FALTA. Para las empresas extranjeras ni yfinance ni Nasdaq
+    tienen insiders: medido con CIB, yfinance devuelve lista vacía y Nasdaq
+    'totalRecords: 0', así que la sección de la UI desaparecía en silencio.
+    Pero la SEC SÍ los tiene: 59 Form 4 presentados. Esta función los lee del
+    origen.
+
+    Devuelve {insider_transactions, recent_insider_buys, recent_insider_sells}
+    con EXACTAMENTE el mismo contrato que consume la tabla de dashboard/app.py:
+    cada operación es {date, insider, position, shares, value, type, text}.
+    Si tampoco aquí hay nada devuelve {} y la sección sigue sin aparecer,
+    igual que hoy.
+
+    Coste: 1 petición al índice + hasta `max_formularios` XML pequeños, con una
+    pausa de 0,12 s entre medias para respetar el límite de 10 peticiones/s de
+    la SEC. Solo se llega aquí cuando los DOS eslabones previos vinieron
+    vacíos, o sea en el camino que hoy no produce absolutamente nada.
+    NUNCA lanza."""
+    resultado = {}
+    try:
+        import xml.etree.ElementTree as ET
+        # Import diferido A PROPÓSITO: data/events.py importa de este módulo,
+        # así que un import arriba crearía una dependencia circular.
+        from data.events import _sec_cik, _SEC_UA
+
+        cik = _sec_cik(ticker)
+        if not cik:
+            return resultado
+
+        r = requests.get(f"https://data.sec.gov/submissions/CIK{cik}.json",
+                         headers=_SEC_UA, timeout=15)
+        if r.status_code != 200:
+            return resultado
+        rec = ((r.json() or {}).get("filings") or {}).get("recent") or {}
+        formas = rec.get("form") or []
+        accs   = rec.get("accessionNumber") or []
+        docs   = rec.get("primaryDocument") or []
+
+        indices = [i for i, f in enumerate(formas)
+                   if str(f).upper() in ("4", "4/A")][:max_formularios]
+        if not indices:
+            return resultado
+
+        cik_int = str(int(cik))       # la URL del archivo usa el CIK sin ceros
+        txns, compras, ventas = [], 0, 0
+
+        for i in indices:
+            if len(txns) >= 20:
+                break
+            try:
+                acc = str(accs[i]).replace("-", "")
+                # primaryDocument puede venir como 'xslF345X06/wk-form4_….xml'
+                # (la versión renderizada); el XML crudo es el mismo nombre sin
+                # la carpeta xsl delante.
+                doc = str(docs[i]).split("/")[-1]
+                url = (f"https://www.sec.gov/Archives/edgar/data/"
+                       f"{cik_int}/{acc}/{doc}")
+                rr = requests.get(url, headers=_SEC_UA, timeout=15)
+                if rr.status_code != 200:
+                    continue
+                raiz = ET.fromstring(rr.text)
+
+                nombre = (raiz.findtext(".//rptOwnerName") or "").title()
+                cargo = (raiz.findtext(".//officerTitle") or "").strip()
+                if not cargo:
+                    # Los Form 4 extranjeros suelen dejar officerTitle vacío:
+                    # el cargo se deduce de las casillas de relación.
+                    rel = raiz.find(".//reportingOwnerRelationship")
+                    papeles = []
+                    if rel is not None:
+                        for etiqueta, campo in (("Director", "isDirector"),
+                                                ("Directivo", "isOfficer"),
+                                                ("Accionista 10%", "isTenPercentOwner")):
+                            if str(rel.findtext(campo) or "0").lower() in ("1", "true"):
+                                papeles.append(etiqueta)
+                    cargo = ", ".join(papeles)
+
+                for etiqueta in ("nonDerivativeTransaction", "derivativeTransaction"):
+                    for tr in raiz.iter(etiqueta):
+                        codigo = (tr.findtext(".//transactionCode") or "").strip().upper()
+                        tipo = _SEC_CODIGO_TIPO.get(codigo, "otra")
+                        try:
+                            acciones = float(tr.findtext(".//transactionShares/value") or 0)
+                        except (TypeError, ValueError):
+                            acciones = 0.0
+                        try:
+                            precio = float(tr.findtext(".//transactionPricePerShare/value") or 0)
+                        except (TypeError, ValueError):
+                            precio = 0.0
+                        if tipo == "compra":
+                            compras += 1
+                        elif tipo == "venta":
+                            ventas += 1
+                        txns.append({
+                            "date":     (tr.findtext(".//transactionDate/value") or "")[:10],
+                            "insider":  nombre,
+                            "position": cargo,
+                            "shares":   acciones,
+                            "value":    acciones * precio,
+                            "type":     tipo,
+                            "text":     ("Form 4 · código %s" % codigo) if codigo else "Form 4",
+                        })
+            except Exception:
+                continue
+            time.sleep(0.12)
+
+        if txns:
+            resultado["insider_transactions"] = txns[:20]
+            resultado["recent_insider_buys"]  = compras
+            resultado["recent_insider_sells"] = ventas
+    except Exception:
+        pass
+    return resultado
+
+
 def _get_insiders_from_nasdaq(ticker: str) -> dict:
     """Fallback de transacciones de insiders via Nasdaq cuando yfinance falla
     (rate-limit en cloud). Devuelve {insider_transactions, recent_insider_buys,
@@ -2091,6 +2217,19 @@ def get_holders_data(ticker: str) -> dict:
             result["insider_transactions"] = nd["insider_transactions"]
             result["recent_insider_buys"] = nd.get("recent_insider_buys", 0)
             result["recent_insider_sells"] = nd.get("recent_insider_sells", 0)
+
+    # Tercer y último eslabón: la SEC (Form 4). Solo se intenta si los DOS
+    # anteriores vinieron vacíos — el caso de las empresas extranjeras (CIB),
+    # donde ni yfinance ni Nasdaq tienen insiders pero la SEC sí. Para
+    # AAPL/KO/MSFT esta condición es falsa y la SEC ni se toca. Si aquí
+    # tampoco hay nada, la sección de la UI simplemente no aparece, exactamente
+    # igual que hoy.
+    if not result.get("insider_transactions"):
+        sec = _get_insiders_from_sec(ticker)
+        if sec.get("insider_transactions"):
+            result["insider_transactions"] = sec["insider_transactions"]
+            result["recent_insider_buys"] = sec.get("recent_insider_buys", 0)
+            result["recent_insider_sells"] = sec.get("recent_insider_sells", 0)
 
     try:
         # major_holders es la fuente MÁS confiable del % total institucional
