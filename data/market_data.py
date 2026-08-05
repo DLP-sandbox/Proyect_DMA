@@ -1238,6 +1238,91 @@ def get_dividend_info(ticker: str, info: Optional[dict] = None) -> dict:
 
 # ── Métricas financieras ───────────────────────────────────────────────────
 
+def _get_financials_from_nasdaq(ticker: str) -> dict:
+    """Estados financieros anuales vía Nasdaq, en el MISMO formato que
+    get_financials(). Su valor está en que Nasdaq publica SIEMPRE en dólares,
+    también para los ADR: para CIB devuelve los ingresos en USD mientras
+    yfinance los da en pesos colombianos. NUNCA lanza; devuelve {} si falla.
+
+    Unidades: las tablas vienen en MILES de USD — comprobado contra AAPL
+    («Total Revenue $416,161,000» = 416,16 mil millones) → se multiplica ×1000.
+    No hay fila de Free Cash Flow: se calcula como «Net Cash Flow-Operating» +
+    «Capital Expenditures» (el capex ya viene en negativo en la tabla)."""
+    out = {}
+    try:
+        datos = _nasdaq_json(f"/api/company/{ticker.upper()}/financials?frequency=1")
+        if not datos:
+            return out
+
+        def _tabla(nombre):
+            t = datos.get(nombre) or {}
+            filas = {}
+            for r in (t.get("rows") or []):
+                filas[str(r.get("value1", "")).strip()] = [
+                    r.get("value2"), r.get("value3"),
+                    r.get("value4"), r.get("value5")]
+            return filas, (t.get("headers") or {})
+
+        inc, hdr = _tabla("incomeStatementTable")
+        bal, _   = _tabla("balanceSheetTable")
+        cf,  _   = _tabla("cashFlowTable")
+        if not inc and not bal and not cf:
+            return out
+
+        def _serie(filas, etiqueta):
+            v = filas.get(etiqueta)
+            if not v:
+                return None
+            s = [(_nasdaq_num(x) * 1000.0) if _nasdaq_num(x) is not None else None
+                 for x in v]
+            return s if any(x is not None for x in s) else None
+
+        def _uno(filas, etiqueta):
+            s = _serie(filas, etiqueta)
+            return s[0] if s else None
+
+        for clave, filas, etiqueta in (
+            ("revenue",             inc, "Total Revenue"),
+            ("gross_profit",        inc, "Gross Profit"),
+            ("operating_income",    inc, "Operating Income"),
+            ("net_income",          inc, "Net Income"),
+            ("operating_cash_flow", cf,  "Net Cash Flow-Operating"),
+            ("capex",               cf,  "Capital Expenditures"),
+        ):
+            s = _serie(filas, etiqueta)
+            if s:
+                out[clave] = s
+
+        ocf, capex = out.get("operating_cash_flow"), out.get("capex")
+        if ocf and capex:
+            out["free_cash_flow"] = [
+                (o + c) if (o is not None and c is not None) else None
+                for o, c in zip(ocf, capex)]
+
+        for clave, etiqueta in (
+            ("total_debt",          "Long-Term Debt"),
+            ("cash",                "Cash and Cash Equivalents"),
+            ("total_assets",        "Total Assets"),
+            ("total_equity",        "Total Equity"),
+            ("current_assets",      "Total Current Assets"),
+            ("current_liabilities", "Total Current Liabilities"),
+        ):
+            v = _uno(bal, etiqueta)
+            if v is not None:
+                out[clave] = v
+
+        anos = [str(hdr.get(k, ""))[-4:]
+                for k in ("value2", "value3", "value4", "value5")]
+        anos = [a for a in anos if a.isdigit()]
+        if anos:
+            out["fiscal_years"] = anos
+        out["moneda"] = "USD"
+        out["fuente_financials"] = "Nasdaq"
+    except Exception:
+        pass
+    return out
+
+
 def get_financials(ticker: str) -> dict:
     key = f"financials_{ticker}"
     cached = _load_cache(key, ttl_hours=TTL_FINANCIALS)
@@ -1297,6 +1382,42 @@ def get_financials(ticker: str) -> dict:
                 "eps_actual": eq["epsActual"].tolist() if "epsActual" in eq.columns else [],
                 "surprise_pct": eq["surprisePercent"].tolist() if "surprisePercent" in eq.columns else [],
             }
+    except Exception:
+        pass
+
+    # ── Respaldo Nasdaq (siempre en USD) ──────────────────────────────────
+    # DOS disparadores, los dos imposibles en una acción USA sana:
+    #   · la empresa REPORTA en otra divisa → lo que trajo yfinance está en
+    #     pesos/reales y NO sirve: se DESCARTA y se rehace desde Nasdaq (si no
+    #     se descartara, los ingresos seguirían en COP y mezclados con el market
+    #     cap en USD producen el FCF Yield de 46470 %);
+    #   · yfinance no trajo NADA de ingresos (Yahoo bloqueado, caso Render).
+    # Para AAPL/KO/MSFT la divisa coincide y `revenue` viene lleno → el bloque
+    # entero se salta y el resultado es byte a byte el de siempre.
+    # get_company_info(ticker) se llama SIEMPRE antes que get_financials (tanto
+    # en el agente como en la UI), así que su caché está caliente y esta lectura
+    # no dispara ni una petición de red extra.
+    try:
+        _inf = _load_cache(f"info_{ticker}", ttl_hours=TTL_COMPANY_INFO) or {}
+        _ajena = (bool(_inf.get("financial_currency")) and
+                  str(_inf["financial_currency"]).upper() != "USD")
+        _rev = result.get("revenue") or []
+        _sin_ingresos = (not _rev) or all(v is None for v in _rev)
+
+        if _ajena or _sin_ingresos:
+            nd = _get_financials_from_nasdaq(ticker)
+            if nd:
+                if _ajena:
+                    for _k in ("revenue", "gross_profit", "operating_income",
+                               "net_income", "ebitda", "free_cash_flow",
+                               "operating_cash_flow", "capex", "total_debt",
+                               "cash", "total_assets", "total_equity",
+                               "current_assets", "current_liabilities",
+                               "fiscal_years"):
+                        result.pop(_k, None)
+                for _k, _v in nd.items():
+                    if _k not in result or result.get(_k) in (None, [], {}):
+                        result[_k] = _v
     except Exception:
         pass
 
