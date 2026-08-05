@@ -675,7 +675,15 @@ def get_company_info(ticker: str) -> dict:
         "pb_ratio":        info.get("priceToBook", None),
         "ev_ebitda":       info.get("enterpriseToEbitda", None),
         "peg_ratio":       info.get("pegRatio", None),
-        "dividend_yield":  info.get("dividendYield", 0),
+        # yfinance devuelve dividendYield en PUNTOS PORCENTUALES (KO=2.45,
+        # AAPL=0.35), pero todo el código que lo consume asume el formato
+        # decimal y lo multiplica ×100 al renderizar → la Quick View pintaba
+        # «245.00%» para KO y «35.00%» para AAPL, y ese mismo número llegaba
+        # al prompt del agente. Se convierte AQUÍ, en el origen, para que la
+        # clave signifique siempre lo mismo (decimal, como el resto de
+        # márgenes). La rama de TradingView ya guarda decimal (_pct_to_dec),
+        # así que las dos fuentes quedan en la misma unidad.
+        "dividend_yield":  (info.get("dividendYield") or 0) / 100.0,
         "target_price":    info.get("targetMeanPrice", 0),
         "analyst_rating":  info.get("recommendationKey", ""),
         "earnings_date":   str(info.get("earningsTimestamp", "")),
@@ -704,6 +712,16 @@ def get_company_info(ticker: str) -> dict:
         "target_low_yf":       info.get("targetLowPrice"),
         "target_median_yf":    info.get("targetMedianPrice"),
         "num_analysts_yf":     info.get("numberOfAnalystOpinions"),
+        # ── Dividendo por acción, en dólares (INFORMATIVO) ────────────────────
+        # Se leen aquí porque el objeto `info` YA está descargado: sacarlas
+        # cuesta CERO llamadas de red. Son claves NUEVAS que ningún prompt de
+        # agente imprime, así que la IA ve exactamente lo mismo que antes.
+        # Las consume get_dividend_info(); OJO: trailingAnnualDividendRate
+        # viene contaminado en los ADR (CIB da 0.0 teniendo dividendo, ITUB lo
+        # da en reales), por eso nunca se usa como fuente primaria.
+        "dividend_rate_yf":       info.get("dividendRate"),                 # anualizado vigente
+        "last_dividend_value_yf": info.get("lastDividendValue"),            # importe del último pago
+        "trailing_div_rate_yf":   info.get("trailingAnnualDividendRate"),   # 12m atrás
     }
 
     # Fallback TradingView: si yfinance.info falló (rate-limit en cloud),
@@ -873,6 +891,215 @@ def _tv_company_row(_tk: str) -> dict:
         return {k: v for k, v in out.items() if v is not None}
     except Exception:
         return {}
+
+
+# ── Dividendo por acción, en dólares (informativo) ─────────────────────────
+
+# Cadencia de pago → palabra en español para el tooltip.
+_PERIODO_DIV = {1: "año", 2: "semestre", 4: "trimestre", 12: "mes"}
+
+
+def _cadencia_desde_importes(anual, por_pago):
+    """Nº de pagos al año a partir de (importe anual, importe de UN pago).
+
+    Solo devuelve un número si el cociente cae MUY cerca de una cadencia real
+    (1, 2, 4 o 12 pagos). Si no encaja devuelve None y el tooltip se queda solo
+    con la cifra anual: preferimos no decir nada a inventar una cadencia.
+    Medido: KO 2.12/0.53 = 4.0 ✓ · O 3.25/0.271 = 12.0 ✓ · CIB semestral ✓ ·
+    ITUB 0.17/0.003 = 56.7 ✗ → sin detalle. NUNCA lanza."""
+    try:
+        if not anual or not por_pago or float(por_pago) <= 0:
+            return None
+        ratio = float(anual) / float(por_pago)
+        for n in (1, 2, 4, 12):
+            if abs(ratio - n) <= n * 0.15:
+                return n
+        return None
+    except Exception:
+        return None
+
+
+def _div_plausible(anual, precio):
+    """Filtro anti-basura: un dividendo por acción tiene que ser positivo y su
+    yield implícito tiene que caber en la realidad (≤30%). Corta de raíz los
+    importes que llegan en OTRA divisa — un dividendo en pesos contra un precio
+    en dólares da un yield de miles por ciento. NUNCA lanza."""
+    try:
+        a = float(anual)
+        if a <= 0 or a != a:
+            return False
+        p = float(precio or 0)
+        if p > 0 and (a / p) > 0.30:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def get_dividend_info(ticker: str, info: Optional[dict] = None) -> dict:
+    """Dividendo ANUAL por acción, en dólares. INFORMATIVO: no entra en el
+    scoring, no viaja al prompt de ningún agente y no modifica get_company_info.
+
+    Devuelve SIEMPRE la misma forma:
+        {"estado": "paga"|"no_paga"|"desconocido",
+         "anual": float|None, "por_pago": float|None,
+         "pagos_ano": int|None, "fuente": str}
+
+    POR QUÉ TRES ESTADOS: la tile tiene que poder DISTINGUIR «la fuente
+    respondió y esta empresa no reparte dividendo» (→ «No») de «no respondió
+    nadie» (→ «—»). Con un 0 o un None a secas, TSLA y una acción con Yahoo
+    caído se veían igual, que era justo el problema a evitar.
+
+    CADENA (cada eslabón en su propio try; NUNCA lanza):
+      a) yfinance `dividendRate` — la tasa anualizada vigente. Trae además
+         `lastDividendValue`, de donde sale la cadencia REAL: es el único
+         eslabón capaz de afirmar «paga mensual» (TradingView agrega por
+         trimestre y para O —que paga cada mes— diría «trimestral»).
+      b) TradingView `dps_common_stock_prim_issue_fy` — dividendo del último
+         ejercicio cerrado. Comprobado: KO 2.04, AAPL 1.02, O 3.223, CIB 2.55,
+         TSLA 0. Funciona con Yahoo bloqueado (Render), que es su razón de ser.
+      c) Nasdaq `annualizedDividend` / `rows[].amount`. Va el ÚLTIMO y su 'N/A'
+         NUNCA cuenta como «no paga»: medido, para NYSE (KO, CIB, NU) devuelve
+         'N/A' y cero filas — interpretarlo haría que KO dijera «No».
+      d) Histórico `.dividends` de yfinance: suma de los últimos 12 meses.
+
+    El estado «no_paga» solo se afirma con una fuente que lo diga en POSITIVO:
+    TradingView con dps == 0 Y `continuous_dividend_payout` == 0 (medido: 0
+    años para TSLA/NU/BRK.B, 46 para KO). Nunca por ausencia de respuesta."""
+    key = f"dividendo_{ticker}"
+    cached = _load_cache(key, ttl_hours=TTL_FINANCIALS)   # 24 h
+    if cached:
+        return cached
+
+    res = {"estado": "desconocido", "anual": None, "por_pago": None,
+           "pagos_ano": None, "fuente": ""}
+    precio = None
+    no_paga_confirmado = False
+
+    # a) yfinance — reutiliza el `info` ya descargado si el llamador lo pasa
+    try:
+        yi = info if (isinstance(info, dict) and info) else None
+        if yi is None:
+            crudo = _yt(ticker).info or {}
+            rate     = crudo.get("dividendRate")
+            ultimo   = crudo.get("lastDividendValue")
+            trailing = crudo.get("trailingAnnualDividendRate")
+            precio   = crudo.get("currentPrice") or crudo.get("regularMarketPrice")
+            # «Respondió» exige PRUEBA de que el símbolo existe (un precio):
+            # yfinance devuelve un dict NO vacío también para tickers
+            # inexistentes, y sin esta condición un símbolo inventado se
+            # declaraba «no paga» en vez de «desconocido».
+            respondio = bool(precio)
+        else:
+            rate     = yi.get("dividend_rate_yf")
+            ultimo   = yi.get("last_dividend_value_yf")
+            trailing = yi.get("trailing_div_rate_yf")
+            precio   = yi.get("current_price")
+            respondio = bool(precio) and ("dividend_rate_yf" in yi or
+                                          "trailing_div_rate_yf" in yi)
+
+        anual = rate if _div_plausible(rate, precio) else None
+        if anual is None and _div_plausible(trailing, precio):
+            anual = trailing
+        if anual is not None:
+            res.update(estado="paga", anual=float(anual), fuente="yfinance")
+            n = _cadencia_desde_importes(anual, ultimo)
+            if n:
+                res["por_pago"], res["pagos_ano"] = float(ultimo), n
+        elif respondio and not rate and not trailing:
+            # Respondió y no hay NINGUNA tasa → candidato a «no paga». No se
+            # cierra aquí: se confirma con TradingView en (b).
+            no_paga_confirmado = True
+    except Exception:
+        pass
+
+    # b) TradingView — además es quien CONFIRMA el «no paga»
+    if res["estado"] != "paga" or res["pagos_ano"] is None:
+        try:
+            from tradingview_screener import Query, col
+            variantes = [str(ticker).upper()]
+            if "-" in variantes[0]:
+                variantes.append(variantes[0].replace("-", "."))
+            for tk in variantes:
+                _, df = (Query()
+                         .select("name", "dps_common_stock_prim_issue_fy",
+                                 "continuous_dividend_payout", "close")
+                         .where(col("name") == tk).limit(1).get_scanner_data())
+                if df is None or df.empty:
+                    continue
+                fila = df.iloc[0]
+
+                def _f(clave):
+                    try:
+                        v = float(fila.get(clave))
+                        return v if v == v else None      # NaN
+                    except (TypeError, ValueError):
+                        return None
+
+                dps  = _f("dps_common_stock_prim_issue_fy")
+                anos = _f("continuous_dividend_payout")
+                px   = _f("close") or precio
+                if res["estado"] != "paga" and _div_plausible(dps, px):
+                    res.update(estado="paga", anual=float(dps),
+                               fuente="TradingView")
+                    # La cadencia NO se deriva de TradingView: agrega por
+                    # trimestre y mentiría con un pagador mensual como O.
+                if dps == 0.0 and not anos:
+                    no_paga_confirmado = True
+                break
+        except Exception:
+            pass
+
+    # c) Nasdaq — reaprovecha el endpoint que ya usa data/events.py
+    if res["estado"] != "paga":
+        try:
+            for tk in {str(ticker).upper(), str(ticker).upper().replace("-", ".")}:
+                datos = _nasdaq_json(f"/api/quote/{tk}/dividends?assetclass=stocks")
+                if not datos:
+                    continue
+                anual = _nasdaq_num(datos.get("annualizedDividend"))  # 'N/A' → None
+                if anual is None:
+                    filas = ((datos.get("dividends") or {}).get("rows") or [])
+                    importes = [_nasdaq_num(f.get("amount")) for f in filas[:4]]
+                    importes = [x for x in importes if x]
+                    if len(importes) >= 4:
+                        anual = sum(importes)
+                if _div_plausible(anual, precio):
+                    res.update(estado="paga", anual=float(anual), fuente="Nasdaq")
+                    break
+        except Exception:
+            pass
+
+    # d) Histórico de yfinance — último recurso, y el que mejor ve la cadencia
+    #    real cuando `lastDividendValue` no vino.
+    if res["estado"] != "paga" or res["pagos_ano"] is None:
+        try:
+            serie = _yt(ticker).dividends
+            if serie is not None and len(serie) > 0:
+                idx = serie.index
+                idx = idx.tz_localize(None) if getattr(idx, "tz", None) else idx
+                corte = pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=365)
+                ult = serie[idx >= corte]
+                if len(ult) > 0:
+                    suma = float(ult.sum())
+                    if res["estado"] != "paga" and _div_plausible(suma, precio):
+                        res.update(estado="paga", anual=suma,
+                                   fuente="yfinance histórico")
+                    if res["pagos_ano"] is None and res["estado"] == "paga":
+                        n = _cadencia_desde_importes(res["anual"], float(ult.iloc[-1]))
+                        if n:
+                            res["por_pago"], res["pagos_ano"] = float(ult.iloc[-1]), n
+        except Exception:
+            pass
+
+    if res["estado"] != "paga" and no_paga_confirmado:
+        res.update(estado="no_paga", fuente="yfinance/TradingView")
+
+    # NUNCA se cachea un «desconocido»: un fallo puntual de red no puede
+    # congelar el «—» durante 24 h (mismo criterio que el rescate del snapshot).
+    if res["estado"] != "desconocido":
+        _save_cache(key, res)
+    return res
 
 
 # ── Métricas financieras ───────────────────────────────────────────────────

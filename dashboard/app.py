@@ -2171,6 +2171,36 @@ def render_fundamentals(analysis: StockAnalysis):
                   else "#E2B25C" if isinstance(beta_raw, (int, float)) and beta_raw <= 1.5
                   else "#F1495F")
 
+    # Dividendo anual por acción — INFORMATIVO. No entra en el scoring ni en el
+    # prompt de ningún agente: sale de get_dividend_info(), con caché propio de
+    # 24 h y su propia cadena de respaldo (yfinance → TradingView → Nasdaq →
+    # histórico). Se le pasa el `info` YA descargado para que el primer eslabón
+    # no gaste una llamada de red extra.
+    # Tres estados: importe si paga · «No» si se VERIFICÓ que no reparte ·
+    # «—» solo si no respondió ninguna fuente (nunca se afirma un «No» falso).
+    from data.market_data import get_dividend_info
+    _div = get_dividend_info(analysis.ticker, info=info) or {}
+    _div_estado = _div.get("estado", "desconocido")
+    if _div_estado == "paga" and _div.get("anual"):
+        div_str, div_color = f"${_div['anual']:.2f}", "#3DD68C"
+        _base = ("Lo que reparte la empresa por cada acción a lo largo de un año: "
+                 f"${_div['anual']:.2f}")
+        if _div.get("por_pago") and _div.get("pagos_ano"):
+            _per = {1: "año", 2: "semestre", 4: "trimestre",
+                    12: "mes"}.get(_div["pagos_ano"], "pago")
+            div_tip = (f"{_base} (${_div['por_pago']:.2f} por {_per}, "
+                       f"{_div['pagos_ano']} pagos al año).")
+        else:
+            div_tip = f"{_base}."
+    elif _div_estado == "no_paga":
+        div_str, div_color = "No", "#8D949E"
+        div_tip = ("Esta empresa no reparte dividendo: reinvierte todo el beneficio "
+                   "en el negocio. No es bueno ni malo por sí solo.")
+    else:
+        div_str, div_color = "—", "#8D949E"
+        div_tip = ("No se pudo verificar ahora el dividendo de esta acción. "
+                   "Vuelve a mirarlo en un rato.")
+
     _render_metric_tiles([
         {"icon": "💎", "label": "Market Cap",
          "value": mktcap_str, "color": "#E2B25C",
@@ -2184,6 +2214,9 @@ def render_fundamentals(analysis: StockAnalysis):
         {"icon": "📈", "label": "Beta",
          "value": beta_str, "color": beta_color,
          "tooltip": "Beta vs S&P 500. <1 = menos volátil que el índice, >1 = más volátil, 1 = correlación perfecta."},
+        {"icon": "💸", "label": "Dividendo Anual",
+         "value": div_str, "color": div_color,
+         "tooltip": div_tip},
     ])
 
     # ── Desglose de sub-scores ───────────────────────────────────
