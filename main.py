@@ -115,7 +115,19 @@ Ejemplos:
         print("-" * 65)
         for a in sorted(all_results, key=lambda x: x.composite_score, reverse=True):
             rr = str(a.risk_reward) if a.risk_reward else "N/A"
-            print(f"{a.ticker:<8} {a.company_name[:29]:<30} {a.composite_score:>5.1f} {a.recommendation:>12} {rr:>6}")
+            print(f"{a.ticker:<8} {a.company_name[:29]:<30} {a.composite_score:>5.1f} {_rec_cli(a.recommendation):>14} {rr:>6}")
+
+
+# Misma traducción de display que la app (dashboard/styles.py::REC_DISPLAY).
+# Se duplica a propósito: la CLI no debe importar la capa de estilos (arrastra
+# miles de líneas de CSS). El ENUM interno no se toca.
+_REC_DISPLAY_CLI = {"EVITAR": "POCO ATRACTIVO", "PASS": "POCO ATRACTIVO"}
+
+
+def _rec_cli(recommendation):
+    """Enum interno → etiqueta visible en la CLI. Lo desconocido pasa igual."""
+    return _REC_DISPLAY_CLI.get(str(recommendation or "").strip().upper(),
+                                recommendation)
 
 
 def _print_analysis(analysis):
@@ -127,7 +139,7 @@ def _print_analysis(analysis):
     }
     sym = rec_symbols.get(analysis.recommendation, "⚪")
 
-    print(f"\n{sym} {analysis.recommendation} — Score: {analysis.composite_score:.1f}/100 — Conviction: {analysis.conviction_level}")
+    print(f"\n{sym} {_rec_cli(analysis.recommendation)} — Score: {analysis.composite_score:.1f}/100 — Conviction: {analysis.conviction_level}")
     print(f"   Empresa: {analysis.company_name} | Sector: {analysis.sector}")
 
     print(f"\n📊 SCORES POR AGENTE:")

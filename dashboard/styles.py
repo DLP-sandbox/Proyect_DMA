@@ -4654,7 +4654,28 @@ div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p::be
 """
 
 
+# Etiqueta VISIBLE de cada recomendación. El ENUM INTERNO NO SE TOCA NUNCA:
+# config/settings.py (THRESHOLDS), el JSON que devuelve el orquestador y
+# _score_to_recommendation() siguen hablando de "EVITAR". Aquí solo se traduce
+# lo que LEE el usuario. Así el scoring, los análisis ya guardados en disco y
+# los prompts de la IA siguen funcionando byte a byte igual que antes.
+REC_DISPLAY = {
+    "EVITAR": "POCO ATRACTIVO",
+    "PASS":   "POCO ATRACTIVO",   # análisis viejos, con los nombres en inglés
+}
+
+
+def rec_display_label(recommendation: str) -> str:
+    """Enum interno → texto que ve el usuario. Lo que no está en el mapa se
+    devuelve TAL CUAL: una etiqueta desconocida nunca puede desaparecer de la
+    pantalla."""
+    return REC_DISPLAY.get(str(recommendation or "").strip().upper(),
+                           recommendation)
+
+
 def get_recommendation_badge(recommendation: str) -> str:
+    # El color se sigue eligiendo con el ENUM CRUDO (no con la etiqueta
+    # traducida) → el badge conserva exactamente el mismo color de siempre.
     css_class = {
         # Nombres nuevos en español
         "MUY ATRACTIVO":   "badge-strong-buy",
@@ -4667,7 +4688,7 @@ def get_recommendation_badge(recommendation: str) -> str:
         "WATCH":           "badge-watch",
         "PASS":            "badge-pass",
     }.get(recommendation, "badge-watch")
-    return f'<span class="{css_class}">{recommendation}</span>'
+    return f'<span class="{css_class}">{rec_display_label(recommendation)}</span>'
 
 
 def score_color(score: float) -> str:

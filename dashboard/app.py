@@ -25,7 +25,7 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 from agents.orchestrator import Orchestrator, StockAnalysis
 from agents.screener import ScreenerAgent, ScreenerResult
 from dashboard.styles import (
-    BLOOMBERG_CSS, get_recommendation_badge, score_color,
+    BLOOMBERG_CSS, get_recommendation_badge, rec_display_label, score_color,
     score_css_class, AGENT_ICONS, AGENT_ICON_SLUG,
 )
 from dashboard.charts import (
@@ -1570,7 +1570,13 @@ def render_overview(analysis: StockAnalysis):
     col_gauge, col_snow = st.columns([1, 1])
 
     with col_gauge:
-        fig = build_gauge(analysis.composite_score, analysis.recommendation)
+        # El gauge imprime la recomendación DENTRO del título de la gráfica
+        # (charts.py), así que la etiqueta hay que traducirla aquí. Se hace en
+        # el llamador y no dentro de build_gauge para no crear una dependencia
+        # charts→styles. El color del arco no cambia: rec_colors solo tiene
+        # claves en inglés, así que el lookup fallaba antes y sigue fallando.
+        fig = build_gauge(analysis.composite_score,
+                          rec_display_label(analysis.recommendation))
         _chart(fig, use_container_width=True,
                         key=f"chart_overview_gauge_{analysis.ticker}")
 
