@@ -1544,10 +1544,17 @@ def compute_quality_ratios(info: dict, financials: dict) -> dict:
     elif safe(ni, 0) and equity and equity != 0:
         ratios["roe"] = safe(ni, 0) / equity * 100
 
-    # ROIC proxy
+    # ROIC proxy — necesita beneficio operativo Y capital invertido. Las
+    # empresas donde el beneficio operativo no viene (bancos y buena parte de
+    # las extranjeras) se quedaban sin ROIC. TradingView lo publica calculado y
+    # ya en porcentaje, así que se usa como respaldo. Solo se rellena si el
+    # cálculo propio no salió: nunca pisa el valor de siempre, y para las
+    # acciones USA `roic_tv` ni existe (TradingView no llega a llamarse).
     invested_capital = (equity or 0) + debt - cash
     if safe(oi, 0) and invested_capital and invested_capital > 0:
         ratios["roic"] = safe(oi, 0) * (1 - 0.21) / invested_capital * 100
+    elif info.get("roic_tv") is not None:
+        ratios["roic"] = float(info["roic_tv"])
 
     # FCF Yield: preferir FCF TTM directo de YF
     fcf0 = safe(fcf, 0)
