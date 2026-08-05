@@ -683,6 +683,29 @@ def _en_banda(clave, valor) -> bool:
         return False
 
 
+# Agregados ABSOLUTOS que yfinance publica en la divisa de REPORTE. Con divisa
+# mixta hay que sustituirlos por los de TradingView, que los publica en dólares
+# (su columna `currency` devuelve USD también para los ADR). No basta con
+# «rellenar si está vacío»: aquí el valor de yfinance EXISTE, solo que está en
+# pesos/reales/dólares taiwaneses, y mezclado con el market cap en USD produce
+# ratios absurdos. Medido: TSM revenue 4.440.492 M TWD → 142.820 M USD.
+_AGREGADOS_DIVISA = ("revenue_ttm", "ebitda_yf", "fcf_yf", "ocf_yf",
+                     "total_cash_yf", "total_debt_yf", "enterprise_value_yf",
+                     "book_value_yf")
+
+# Múltiplos que DIVIDEN una magnitud en divisa de cotización (precio, market
+# cap, EV) entre otra en divisa de reporte → estructuralmente rotos con divisa
+# mixta. Se prefiere TradingView y, si no es plausible, se neutralizan.
+#
+# OJO: `pe_ratio` y `forward_pe` NO entran aquí a propósito. Medido: el P/E de
+# yfinance es COHERENTE en dólares incluso para los ADR, porque su `trailingEps`
+# ya viene por acción del ADR y en USD (CIB 90.14/8.66 = 10.41 ✓, TSM
+# 414.00/11.39 = 36.35 ✓, PBR 18.36/3.20 = 5.74 ✓). Es justo el caso donde
+# TradingView se equivoca: para CIB da 45.85 porque mezcla la acción local con
+# el ADR (ratio 4:1). Pisarlo con TV empeoraría el dato.
+_MULTIPLOS_DIVISA = ("pb_ratio", "ps_ratio", "ev_revenue_yf", "ev_ebitda")
+
+
 def get_company_info(ticker: str) -> dict:
     key = f"info_{ticker}"
     cached = _load_cache(key, ttl_hours=TTL_COMPANY_INFO)
@@ -801,7 +824,11 @@ def get_company_info(ticker: str) -> dict:
                 not result.get("ev_ebitda") or
                 not result.get("revenue_ttm") or
                 not result.get("profit_margin"))
-    if needs_tv:
+    # Con divisa MIXTA hay que llamar a TradingView SIEMPRE, aunque yfinance
+    # tenga todos los campos de la compuerta: el problema no es que falten, es
+    # que están en la divisa equivocada. Medido: TSM y PBR daban needs_tv=False
+    # (yfinance trae los 6) y por eso el arreglo no llegaba a ejecutarse nunca.
+    if needs_tv or _mixta:
         tv = _get_company_info_from_tradingview(ticker)
         # Placeholders "truthy" que deben contar como VACÍO: sin esto, un sector
         # "Unknown" o un rating "N/A" bloqueaban el relleno de TradingView y se
@@ -821,6 +848,24 @@ def get_company_info(ticker: str) -> dict:
         # que es la única causa conocida de estos números. Para cualquier acción
         # USA `_mixta` es False y este bloque entero se salta.
         if _mixta:
+            # a) Agregados ABSOLUTOS: los de yfinance están en la divisa de
+            #    reporte; los de TradingView en dólares. Se SUSTITUYEN (no se
+            #    rellenan): el valor viejo existe, pero está en otra escala.
+            for _k in _AGREGADOS_DIVISA:
+                _nuevo = tv.get(_k)
+                if _nuevo is not None:
+                    result[_k] = _nuevo
+            # b) Múltiplos que mezclan las dos divisas: se prefiere TradingView
+            #    si es plausible. Si no lo es, quedan como estaban y el bloque
+            #    de neutralización de más abajo los deja en None.
+            for _k in _MULTIPLOS_DIVISA:
+                _nuevo = tv.get(_k)
+                if _nuevo is not None and _en_banda(_k, _nuevo):
+                    result[_k] = _nuevo
+            # c) Red de seguridad para el resto de múltiplos de la lista blanca
+            #    (P/E y Forward P/E): solo si el actual está roto Y el de TV es
+            #    plausible. En la práctica no se dispara, porque el P/E de
+            #    yfinance ya viene bien en USD — está aquí por si acaso.
             for _k in _BANDAS_MULTIPLO:
                 _nuevo = tv.get(_k)
                 if (_nuevo is not None and not _en_banda(_k, result.get(_k))
