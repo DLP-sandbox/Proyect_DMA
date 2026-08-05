@@ -624,6 +624,65 @@ def get_live_price(ticker: str) -> Optional[float]:
 
 # ── Información de la empresa ─────────────────────────────────────────────
 
+# ── Divisa de reporte (ADRs y empresas extranjeras) ────────────────────────
+# POR QUÉ EXISTE. yfinance mete DOS divisas en el MISMO diccionario. Para un
+# ADR como CIB (Bancolombia) `currency` es USD —precio, market cap y dividendo
+# del ADR van en dólares— pero `financialCurrency` es COP: ingresos, EBITDA,
+# FCF, deuda y book value vienen en PESOS. Todo ratio que mezcle las dos
+# escalas sale multiplicado por ~4000. Medido en producción:
+#   · pb_ratio  = precio USD / bookValue COP → 0.00204   (el real es 2.06)
+#   · fcf_yield = FCF COP / market cap USD   → 46470 %   (¡y se pintaba VERDE!)
+#   · al prompt del agente le llegaba «2025: $27494.93B» de ingresos de un
+#     banco que factura 10,5 mil millones de dólares.
+# EL ARREGLO NO CONVIERTE DIVISAS (no queremos tipos de cambio en la app):
+# prefiere las fuentes que YA publican en USD (agregados de TradingView y el
+# /financials de Nasdaq) y, cuando no hay ninguna, NEUTRALIZA el valor a None
+# para que la UI pinte «—» en vez de un número falso.
+
+def _divisa_de_reporte_ajena(info_yf: dict) -> bool:
+    """True si la empresa REPORTA sus cuentas en una divisa distinta de aquella
+    en la que COTIZA. Deliberadamente conservador: si el dato falta devuelve
+    False, así las acciones USA —y cualquier caso dudoso— siguen EXACTAMENTE
+    el camino de siempre. Medido: AAPL/KO/MSFT USD/USD → False; CIB USD/COP,
+    ITUB y PBR USD/BRL → True. NUNCA lanza."""
+    try:
+        cotiza  = str(info_yf.get("currency") or "USD").upper().strip()
+        reporta = str(info_yf.get("financialCurrency") or "").upper().strip()
+        return bool(reporta) and reporta != cotiza
+    except Exception:
+        return False
+
+
+# Bandas de plausibilidad de los múltiplos que se corrompen al mezclar divisas.
+# Criterio DELIBERADAMENTE ESTRECHO, con tres condiciones simultáneas:
+#   (1) lista blanca de claves — nada fuera de aquí se toca jamás;
+#   (2) el valor ACTUAL tiene que estar FUERA de la banda (o sea, roto);
+#   (3) el valor de TradingView tiene que estar DENTRO.
+# Si los dos son razonables NO SE TOCA NADA: ante la duda gana el dato que ya
+# estaba. La razón exacta de este criterio: para CIB el P/E de TradingView
+# (46.35) discrepa del de yfinance (10.49) porque TV mezcla la acción local con
+# el ADR (ratio 4:1) — los dos caen dentro de la banda, así que el P/E NO se
+# pisa. En cambio pb_ratio=0.00204 cae fuera y TV trae 2.063 dentro → ese SÍ.
+_BANDAS_MULTIPLO = {
+    "pb_ratio":      (0.05, 100.0),
+    "ps_ratio":      (0.05, 100.0),
+    "ev_ebitda":     (0.5,  200.0),
+    "ev_revenue_yf": (0.05, 100.0),
+    "pe_ratio":      (0.5,  500.0),
+    "forward_pe":    (0.5,  500.0),
+}
+
+
+def _en_banda(clave, valor) -> bool:
+    """True si el valor es un número dentro de la banda plausible de esa clave."""
+    try:
+        lo, hi = _BANDAS_MULTIPLO[clave]
+        v = float(valor)
+        return v == v and lo <= v <= hi
+    except (TypeError, ValueError, KeyError):
+        return False
+
+
 def get_company_info(ticker: str) -> dict:
     key = f"info_{ticker}"
     cached = _load_cache(key, ttl_hours=TTL_COMPANY_INFO)
@@ -722,7 +781,16 @@ def get_company_info(ticker: str) -> dict:
         "dividend_rate_yf":       info.get("dividendRate"),                 # anualizado vigente
         "last_dividend_value_yf": info.get("lastDividendValue"),            # importe del último pago
         "trailing_div_rate_yf":   info.get("trailingAnnualDividendRate"),   # 12m atrás
+        # Divisa en la que la empresa REPORTA sus cuentas (≠ la de cotización en
+        # los ADR). La consume get_financials para saber si debe rehacer los
+        # estados financieros desde una fuente en dólares.
+        "financial_currency": (str(info.get("financialCurrency") or "").upper() or None),
     }
+
+    # Guarda maestra de todo el arreglo de divisa mixta. Para AAPL/KO/MSFT —y
+    # para el caso de yfinance bloqueado, donde `info` viene vacío— es False y
+    # NI UNA sola línea del arreglo llega a ejecutarse.
+    _mixta = _divisa_de_reporte_ajena(info)
 
     # Fallback TradingView: si yfinance.info falló (rate-limit en cloud),
     # los campos críticos vienen vacíos. Los completamos con TV que no
@@ -748,6 +816,17 @@ def get_company_info(ticker: str) -> dict:
         if result.get("name") == ticker and tv.get("name"):
             result["name"] = tv["name"]
 
+        # Reparación de valores CORRUPTOS (no vacíos, que ya los cubre el bucle
+        # de arriba). Solo se activa cuando la empresa reporta en OTRA divisa,
+        # que es la única causa conocida de estos números. Para cualquier acción
+        # USA `_mixta` es False y este bloque entero se salta.
+        if _mixta:
+            for _k in _BANDAS_MULTIPLO:
+                _nuevo = tv.get(_k)
+                if (_nuevo is not None and not _en_banda(_k, result.get(_k))
+                        and _en_banda(_k, _nuevo)):
+                    result[_k] = _nuevo
+
     # Short interest: si yfinance no lo trajo (None en cloud), completar con
     # Nasdaq (acciones en corto / float; el float puede venir de TradingView).
     # Si tampoco hay, se queda None → la UI muestra "N/D", nunca un 0% falso.
@@ -758,6 +837,33 @@ def get_company_info(ticker: str) -> dict:
             result["short_percent"] = si["short_percent"]
         if result.get("short_ratio") is None and si.get("short_ratio") is not None:
             result["short_ratio"] = si["short_ratio"]
+
+    # ── Neutralización por divisa mixta ───────────────────────────────────
+    # Lo que no se ha podido rescatar en USD se deja en None a propósito: la UI
+    # pinta «—» y el prompt del agente dice «N/A». Un hueco honesto es mucho
+    # mejor que un 46470 % de FCF Yield pintado en verde, o que un margen bruto
+    # de 0.0 % en rojo cuando en realidad es un banco y el concepto no aplica.
+    if _mixta:
+        # a) Ceros ENVENENADOS de yfinance: para CIB grossMargins y
+        #    operatingMargins llegan 0.0 mientras profitMargins sí tiene valor.
+        #    Un 0.0 exacto junto a un beneficio positivo no existe en la
+        #    práctica: es ausencia de dato disfrazada de cero.
+        for _k in ("gross_margin_yf", "operating_margin_yf"):
+            if result.get(_k) == 0.0:
+                result[_k] = None
+        # b) Múltiplos que siguen fuera de banda tras el rescate de TradingView.
+        for _k in _BANDAS_MULTIPLO:
+            if result.get(_k) is not None and not _en_banda(_k, result[_k]):
+                result[_k] = None
+        # c) EV/Revenue re-derivado de dos agregados que YA están ambos en USD
+        #    (TradingView), en vez del enterpriseToRevenue contaminado de YF.
+        if result.get("ev_revenue_yf") is None:
+            try:
+                _ev, _rev = result.get("enterprise_value_yf"), result.get("revenue_ttm")
+                if _ev and _rev and float(_rev) > 0:
+                    result["ev_revenue_yf"] = round(float(_ev) / float(_rev), 3)
+            except Exception:
+                pass
 
     _save_cache(key, result)
 
@@ -796,7 +902,11 @@ def _tv_company_row(_tk: str) -> dict:
                 "dividend_yield_recent", "total_revenue_ttm",
                 "gross_margin", "operating_margin", "net_margin",
                 "return_on_equity", "return_on_assets",
-                "debt_to_equity", "current_ratio_quarterly",
+                # FIX: `current_ratio_quarterly` devuelve None SIEMPRE (medido
+                # con la query real contra AAPL y KO) → el respaldo del Current
+                # Ratio llevaba muerto desde que se escribió. El nombre válido
+                # hoy es `current_ratio`.
+                "debt_to_equity", "current_ratio",
                 "beta_1_year", "average_volume_30d_calc",
                 "price_target_average", "recommendation_mark",
                 "earnings_release_next_date",
@@ -807,6 +917,17 @@ def _tv_company_row(_tk: str) -> dict:
                 "earnings_per_share_forecast_next_fy",
                 "total_revenue_yoy_growth_ttm",
                 "earnings_per_share_diluted_yoy_growth_ttm",
+                # ── Respaldos AMPLIADOS: agregados absolutos que TradingView
+                # publica en USD también para los ADR (`currency` sale USD para
+                # CIB). Cubren los campos que dependían SOLO de yfinance y que
+                # en las extranjeras venían vacíos o en la divisa local.
+                # Todas verificadas una a una contra AAPL y CIB.
+                "currency",
+                "enterprise_value_current", "total_debt", "ebitda",
+                "free_cash_flow_ttm", "cash_f_operating_activities_ttm",
+                "cash_n_short_term_invest_fq", "quick_ratio",
+                "number_of_employees", "return_on_invested_capital",
+                "price_52_week_high", "price_52_week_low",
             )
             .where(col("name") == _tk)
             .limit(1)
@@ -861,7 +982,20 @@ def _tv_company_row(_tk: str) -> dict:
             "earnings_growth_yf":  _pct_to_dec("earnings_per_share_diluted_yoy_growth_ttm"),
             # Ratios sin conversión (mismo formato en YF y TV)
             "debt_equity_yf":      _f("debt_to_equity"),
-            "current_ratio_yf":    _f("current_ratio_quarterly"),
+            "current_ratio_yf":    _f("current_ratio"),
+            "quick_ratio_yf":      _f("quick_ratio"),
+            # Agregados absolutos (en USD, también para los ADR)
+            "ebitda_yf":           _f("ebitda"),
+            "fcf_yf":              _f("free_cash_flow_ttm"),
+            "ocf_yf":              _f("cash_f_operating_activities_ttm"),
+            "total_cash_yf":       _f("cash_n_short_term_invest_fq"),
+            "total_debt_yf":       _f("total_debt"),
+            "enterprise_value_yf": _f("enterprise_value_current"),
+            "employees":           _f("number_of_employees"),
+            "52w_high":            _f("price_52_week_high"),
+            "52w_low":             _f("price_52_week_low"),
+            "roic_tv":             _f("return_on_invested_capital"),
+            "tv_currency":         (str(row.get("currency", "") or "").upper() or None),
             "beta":           _f("beta_1_year"),
             "avg_volume":     _f("average_volume_30d_calc"),
             "target_price":   _f("price_target_average"),
@@ -1548,10 +1682,20 @@ def _nasdaq_num(s):
         return None
 
 
-def _nasdaq_json(path: str) -> Optional[dict]:
+def _nasdaq_json(path: str, _intentos: int = 2) -> Optional[dict]:
     """GET a la API pública de Nasdaq (api.nasdaq.com). Nasdaq cubre TODAS las
     acciones de NASDAQ y NYSE y no rate-limita las IPs de datacenter como sí
-    hace Yahoo. Devuelve el dict 'data' de la respuesta, o None. NUNCA lanza."""
+    hace Yahoo. Devuelve el dict 'data' de la respuesta, o None. NUNCA lanza.
+
+    REINTENTO: Nasdaq corta esporádicamente una petición cuando se encadenan
+    varias seguidas (insiders → institucionales → short interest, todas en el
+    mismo render). El `except: pass` de los llamadores convertía ese fallo
+    transitorio en un «esta empresa no tiene insiders» silencioso. Se reintenta
+    UNA vez y SOLO ante fallo real —excepción o 403/429/5xx—, nunca ante un 200
+    con datos vacíos, que es una respuesta legítima (para NYSE el endpoint de
+    dividendos responde 200 y vacío, y reintentarlo sería tiempo tirado). El
+    segundo intento usa un timeout más corto para que el peor caso no dispare
+    el tiempo de carga: 15 s + 0,8 s + 8 s en vez de 30 s."""
     url = f"https://api.nasdaq.com{path}"
     headers = {
         "Accept": "application/json, text/plain, */*",
@@ -1561,14 +1705,21 @@ def _nasdaq_json(path: str) -> Optional[dict]:
         "Origin": "https://www.nasdaq.com",
         "Referer": "https://www.nasdaq.com/",
     }
-    try:
-        resp = requests.get(url, headers=headers, timeout=15)
-        if resp.status_code != 200:
-            return None
-        payload = resp.json()
-        return payload.get("data") if isinstance(payload, dict) else None
-    except Exception:
-        return None
+    intentos = max(1, int(_intentos))
+    for intento in range(intentos):
+        try:
+            resp = requests.get(url, headers=headers,
+                                timeout=15 if intento == 0 else 8)
+            if resp.status_code == 200:
+                payload = resp.json()
+                return payload.get("data") if isinstance(payload, dict) else None
+            if resp.status_code not in (403, 429, 500, 502, 503, 504):
+                return None      # 404 y demás: no hay nada que reintentar
+        except Exception:
+            pass
+        if intento + 1 < intentos:
+            time.sleep(0.8)
+    return None
 
 
 def _get_insiders_from_nasdaq(ticker: str) -> dict:
