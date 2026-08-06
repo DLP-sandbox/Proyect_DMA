@@ -1988,6 +1988,33 @@ hr {
     .cat-agenda-days { font-size: 0.85rem; }
 }
 
+/* ── Disclaimer legal — presente pero deliberadamente discreto ─────────
+   Va al final del Overview y del Riesgo. Tarjeta con el MISMO fondo oscuro
+   que el resto (surface-1) para que no llame la atención, texto gris
+   apagado y letra pequeña: tiene que estar y poder leerse, no competir
+   con el análisis. Sin animación de entrada, a propósito. */
+.disclaimer-card {
+    background: var(--surface-1);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-md);
+    padding: 12px 16px;
+    margin: 26px 0 4px 0;
+}
+
+.disclaimer-text {
+    color: #5E6570;              /* gris apagado, el mismo de los "no aplica" */
+    font-size: 0.68rem;
+    line-height: 1.6;
+    letter-spacing: 0.005em;
+    margin: 0;
+    text-align: center;
+}
+
+@media (max-width: 640px) {
+    .disclaimer-card { padding: 10px 12px; margin-top: 20px; }
+    .disclaimer-text { font-size: 0.64rem; text-align: left; }
+}
+
 /* ─────────────────────────────────────────────────────────────────────
    SKELETON LOADERS — pantallas de carga con shimmer + spinner pequeño
    ───────────────────────────────────────────────────────────────────── */

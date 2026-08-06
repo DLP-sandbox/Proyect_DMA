@@ -1147,6 +1147,28 @@ def _meter_html(pct):
             f'</span></div>')
 
 
+def _render_disclaimer():
+    """Aviso legal al pie del Overview y del Riesgo.
+
+    Deliberadamente discreto: mismo fondo oscuro que las demás tarjetas, gris
+    apagado y letra pequeña. Tiene que estar y poder leerse, no robar atención
+    al análisis. NUNCA lanza: es lo último que se pinta en la sección y no
+    puede tumbarla."""
+    try:
+        st.markdown(
+            # OJO: <div>, no <p>. La regla `.stMarkdown p` de styles.py fija
+            # color con !important y tamaño 0.88rem, y se comía tanto el gris
+            # apagado como la letra pequeña de este aviso.
+            '<div class="disclaimer-card"><div class="disclaimer-text">'
+            'DLP Analyzer se conecta y analiza en vivo los datos de mercado de cada acción. '
+            'Esto no es una recomendación de inversión ni asesoría financiera personalizada.'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        pass
+
+
 def _render_metric_tiles(metrics):
     """Fila de KPI tiles. metrics = [{icon, label, value, color, tooltip?, meter?}]
     `meter` (0-100 opcional) pinta el termómetro de calidad del dato.
@@ -4593,6 +4615,10 @@ def main():
 
     if sect == "Overview":
         render_overview(analysis)
+        # El aviso legal se pinta AQUÍ y no dentro de render_overview para que
+        # aparezca al final del todo pase lo que pase: si la función corta antes
+        # por falta de datos, el disclaimer sigue estando.
+        _render_disclaimer()
     elif sect == "Técnico":
         render_technical(analysis)
     elif sect == "Fundamentales":
@@ -4614,6 +4640,7 @@ def main():
         render_sentiment(analysis)
     elif sect == "Riesgo":
         render_risk(analysis)
+        _render_disclaimer()
 
 
 if __name__ == "__main__":
