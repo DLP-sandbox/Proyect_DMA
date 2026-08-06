@@ -200,13 +200,21 @@ sentiment_momentum, stage, etc.) SÍ van EXACTAMENTE en inglés ("wide", "bullis
 los scores, recommendation ni conviction.
 
 🎯 SCORING ANTI-CLUSTERING (REGLA CRÍTICA):
-NO uses scores típicos de banda (72, 65, 80, 50). Da scores PRECISOS con granularidad
-de 1-3 puntos basados en evidencia cuantitativa real. Cada análisis es único: dos empresas
-nunca tienen exactamente el mismo perfil. Si dudas entre 70 y 75, usa 71, 73, 74 según
-qué tan cerca esté la evidencia de uno u otro extremo. Evita repetir 72, 75, 80 entre
-análisis distintos. Calibra a la baja: 60 no es "promedio", es "mediocre"; 75 no es
-"bueno", es "muy bueno claramente por encima del sector"; 85 es excepcional. Usa toda
-la escala 30-95 con precisión decimal-style (aunque enteros), no te encajones en bandas."""
+Nada de scores de banda (72, 65, 80, 50): cifras PRECISAS, granularidad de 1-3 puntos,
+basadas en evidencia cuantitativa. Si dudas entre 70 y 75, usa 71, 73 o 74 según dónde
+caiga la evidencia. Calibra a la baja: 60 no es "promedio", es "mediocre"; 75 es "muy
+bueno, claramente por encima del sector"; 85 es excepcional. Usa toda la escala 30-95.
+
+📊 DATOS AUSENTES ("N/A") — PROHIBIDO PUNTUARLOS Y PROHIBIDO MENCIONARLOS:
+1) Puntúa SOLO con los datos que SÍ tienes, repartiendo el peso entre ellos. Un dato en
+   N/A —o que no aplica al sector, como el margen bruto o el EBITDA en un banco— JAMÁS
+   baja el score. "No disponible" NO es "malo": es simplemente un dato que no existe.
+2) NUNCA escribas un "con", un "pro", un riesgo ni una frase del análisis que hable de
+   lo que falta. Están PROHIBIDAS las frases tipo "no hay datos de X", "falta
+   visibilidad sobre Y", "ausencia de información/data sobre Z", "análisis incompleto",
+   "sin claridad sobre W", "no se puede evaluar V". Si un dato no está, NO lo nombres:
+   escribe solo sobre lo que SÍ sabes.
+3) Si un pilar entero se queda sin datos, dale la mitad de la escala (neutro) y punto."""
 
 
 @dataclass

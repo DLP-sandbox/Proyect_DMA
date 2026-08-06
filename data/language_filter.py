@@ -265,6 +265,67 @@ def _clean_text(text):
     return text
 
 
+# ── Ítems que se QUITAN: quejas sobre datos que faltan ────────────────────
+# POR QUÉ. Cuando una acción no publica una métrica —o esa métrica no aplica a
+# su sector, como el margen bruto o el EBITDA en un banco— el modelo tendía a
+# convertir el hueco en un argumento en contra: «Falta transparencia en
+# métricas clave: no hay datos de ROIC, EBITDA ni liquidez». Eso es castigar a
+# la empresa por un vacío de información, no por su negocio. El recordatorio de
+# estilo ya lo prohíbe, pero una instrucción a un modelo NUNCA es garantía:
+# medido en un A/B real, la prohibición bajó los casos de 2 a 1, no a 0.
+# Esta capa determinista ($0, sin IA) es la garantía de verdad.
+#
+# DOBLE SEÑAL para no llevarse por delante hechos legítimos del negocio: hace
+# falta un marcador de AUSENCIA **y** que lo ausente sea un DATO o una MÉTRICA.
+# Así «ausencia de dividendo» o «ausencia de nuevos fondos entrando» —que son
+# hechos reales y deben quedarse— nunca se tocan, y en cambio «ausencia de
+# datos sobre ROIC» o «ROIC desconocido» sí se van.
+# El marcador de ausencia tiene que ir PEGADO a la palabra de dato (hasta dos
+# palabras de relleno en medio), no solo aparecer en la misma frase. Con la
+# versión laxa se colaban «sin depender de deuda», «sin compras compensatorias»
+# y «sin deuda neta: el balance está limpio», que son hechos del negocio.
+_MARCADOR = (r"(?:sin|falta de|faltan|falta|ausencia de|carece de|carecen de|"
+             r"no hay|no existe[n]?|no se public[ao]|no report[ao]|no tenemos|"
+             r"no conocemos|no sabemos)")
+_DATO_PAL = (r"(?:datos?|data|informaci[oó]n|m[eé]tricas?|visibilidad|"
+             r"transparencia|cifras?|detalle[s]?|desglose)")
+
+_QUEJA_DATOS = re.compile(
+    r"(" + _MARCADOR + r"\s+(?:\w+\s+){0,2}" + _DATO_PAL + r"|"
+    r"\bN/A\b|no disponible[s]?|no est[aá]n? disponible[s]?|"
+    r"(?:datos?|informaci[oó]n|an[aá]lisis)\s+incomplet[oa]s?|"
+    r"incompletos?\s+(?:datos|por falta)|"
+    r"no se puede[n]?\s+(?:evaluar|medir|calcular|verificar|confirmar|estimar)|"
+    r"no podemos\s+(?:evaluar|medir|calcular|verificar|confirmar|estimar)|"
+    r"(?:ROIC|ROE|ROA|EBITDA|FCF|EV/EBITDA|P/E|current ratio|quick ratio|"
+    r"m[aá]rgen(?:es)?|liquidez)\s+(?:real\s+)?desconocid[oa]s?"
+    r")", re.I)
+
+
+def _es_queja_de_datos(texto):
+    """True si el ítem es una queja sobre datos que faltan (y por tanto hay que
+    quitarlo). Exige las DOS señales en la misma frase. NUNCA lanza."""
+    try:
+        if not isinstance(texto, str) or not texto.strip():
+            return False
+        return bool(_QUEJA_DATOS.search(texto))
+    except Exception:
+        return False
+
+
+def _drop_quejas_de_datos(items):
+    """Quita de una lista de pros/cons/riesgos los ítems que solo se quejan de
+    datos ausentes. Si TODOS lo fueran, devuelve la lista original: preferimos
+    un argumento imperfecto a una sección vacía. NUNCA lanza."""
+    try:
+        if not isinstance(items, list) or not items:
+            return items
+        quedan = [x for x in items if not _es_queja_de_datos(x)]
+        return quedan if quedan else items
+    except Exception:
+        return items
+
+
 def _clean_list(items):
     """Limpia cada string de una lista (deja intactos los no-string)."""
     if not isinstance(items, list):
@@ -310,17 +371,20 @@ def clean_analysis_language(analysis):
                 setattr(analysis, attr, _clean_text(getattr(analysis, attr)))
         for attr in _ANALYSIS_LIST_FIELDS:
             if hasattr(analysis, attr):
-                setattr(analysis, attr, _clean_list(getattr(analysis, attr)))
+                setattr(analysis, attr,
+                        _drop_quejas_de_datos(_clean_list(getattr(analysis, attr))))
 
         reports = getattr(analysis, "reports", None)
         if isinstance(reports, dict):
             for rep in reports.values():
                 if hasattr(rep, "analysis"):
                     rep.analysis = _clean_text(rep.analysis)
+                # Los pros/cons pasan además por el filtro que QUITA las
+                # quejas sobre datos ausentes (ver _drop_quejas_de_datos).
                 if hasattr(rep, "pros"):
-                    rep.pros = _clean_list(rep.pros)
+                    rep.pros = _drop_quejas_de_datos(_clean_list(rep.pros))
                 if hasattr(rep, "cons"):
-                    rep.cons = _clean_list(rep.cons)
+                    rep.cons = _drop_quejas_de_datos(_clean_list(rep.cons))
                 # Campos narrativos de raw_data (LISTA BLANCA — ver arriba).
                 # Solo strings o listas de strings; cualquier otro tipo se salta.
                 rd = getattr(rep, "raw_data", None)
